@@ -1,166 +1,111 @@
-# Watt Data MCP Integration Suite
+# Watt Data MCP Web Assistant
 
-Complete suite for working with the Watt Data MCP server using Claude AI - includes both a CLI proof-of-concept and a full web application.
+A Next.js web application for interacting with the Watt Data MCP server through an AI chatbot interface with CSV upload and enrichment capabilities.
 
-## 📦 What's Included
+## Features
 
-This repository contains two projects:
+- **AI Chat Interface**: Natural language interaction with Watt Data tools
+- **CSV Upload**: Drag-and-drop or file picker for CSV files
+- **Auto-Detection**: Automatically detects email, phone, address, and person_id columns
+- **Data Enrichment**: Enrich uploaded data with demographics, interests, and profile data
+- **CSV Export**: Download enriched data as CSV
+- **Chat History**: Persistent chat history in browser localStorage
+- **Real-time Preview**: View uploaded data and enrichment status
 
-### 1. **CLI Proof of Concept** (`/` root directory)
-A Node.js CLI tool that demonstrates programmatic connection to the Watt Data MCP server.
+## Quick Start
 
-### 2. **Web Application** (`/watt-data-web/`)
-A full-featured Next.js web app with AI chat interface, CSV upload, data enrichment, and export capabilities.
-
-## 🚀 Quick Start
-
-### Option 1: Web Application (Recommended)
+### 1. Installation
 
 ```bash
-cd watt-data-web
 npm install
+```
+
+### 2. Environment Setup
+
+The `.env.local` file should already be configured with your Watt Data credentials from the parent project. If not, copy it:
+
+```bash
+cp ../.env .env.local
+```
+
+Required environment variables:
+- `ANTHROPIC_API_KEY` - Your Anthropic API key
+- `CLAUDE_MODEL` - Claude model to use (e.g., claude-sonnet-4-5)
+- `MCP_TRANSPORT_TYPE` - Transport type (streamable)
+- `MCP_AUTH_TYPE` - Authentication type (basic)
+- `MCP_SERVER_URL` - Watt Data MCP server URL
+- `MCP_SERVER_API_KEY` - Base64-encoded Watt Data token
+
+### 3. Run Development Server
+
+```bash
 npm run dev
 ```
 
-Open http://localhost:3000 and start enriching data!
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-### Option 2: CLI Tool
+## Usage
 
-```bash
-npm install
-npm start
-# Or with custom prompt:
-node agent-poc.js "What tools are available?"
-```
+### Basic Workflow
 
-## 🔧 Setup
+1. **Upload CSV**: Drag and drop or click to upload a CSV file with:
+   - Email addresses
+   - Phone numbers
+   - Physical addresses
+   - Person IDs
 
-### 1. Prerequisites
+2. **Ask Questions**: Chat with the AI assistant about your data:
+   - "Enrich all rows with demographics"
+   - "Find people in California"
+   - "Get profiles for the first 10 rows"
 
-- Node.js 18+
-- Anthropic API key
-- Watt Data MCP server access (Machine-to-Machine token from Clerk)
+3. **Export Results**: Click "Export CSV" to download enriched data
 
-### 2. Environment Configuration
-
-Copy the Watt Data config template:
-
-```bash
-cp .env.wattdata.example .env
-```
-
-Edit `.env` and add your credentials:
-
-```env
-# Anthropic API key
-ANTHROPIC_API_KEY=sk-ant-your_key_here
-
-# Claude model
-CLAUDE_MODEL=claude-sonnet-4-5
-
-# MCP Configuration
-MCP_TRANSPORT_TYPE=streamable
-MCP_AUTH_TYPE=basic
-MCP_SERVER_URL=https://api.wattdata.ai/mcp
-
-# Watt Data API key (base64 encoded)
-MCP_SERVER_API_KEY=your_base64_token_here
-```
-
-### 3. Get Your Watt Data API Key
-
-1. Log into Clerk web UI
-2. Create a Machine for your customer
-3. Create a new token within that Machine
-4. Record the **Token ID** and **Token Secret**
-5. Encode credentials:
-   ```bash
-   echo -n "tokenId:tokenSecret" | base64
-   ```
-6. Use the result as `MCP_SERVER_API_KEY`
-
-## 📚 Project Structure
+### Example Queries
 
 ```
-watt-data/
-├── agent-poc.js              # CLI proof of concept
-├── check-models.js           # Check available Claude models
-├── package.json              # CLI dependencies
-├── .env                      # Your config (not in git)
-├── .env.wattdata.example     # Config template
-├── POC-README.md             # CLI documentation
-├── QUICKSTART.md             # Quick start guide
-└── watt-data-web/            # Web application
-    ├── app/
-    │   ├── page.tsx          # Main UI
-    │   └── api/              # API routes
-    ├── components/           # React components
-    ├── lib/                  # Utilities
-    └── README.md             # Web app docs
+"Resolve the emails in my CSV and get their demographics"
+
+"Enrich the first 5 rows with full profile data"
+
+"What clusters are available for my data?"
+
+"Find similar people to the profiles in my CSV"
 ```
 
-## 🎯 Features
+## Project Structure
 
-### CLI Tool
-- ✅ Connect to Watt Data MCP server via API
-- ✅ Supports Streamable HTTP transport
-- ✅ Basic authentication with M2M tokens
-- ✅ Agentic tool execution
-- ✅ 6 available Watt Data tools
-
-### Web Application
-- ✅ AI chat interface
-- ✅ CSV upload with drag-and-drop
-- ✅ Auto-detect email/phone/address columns
-- ✅ Data enrichment with demographics
-- ✅ Export enriched CSV
-- ✅ Persistent chat history
-- ✅ Real-time data preview
-
-## 🛠️ Available Tools (via Watt Data MCP)
-
-1. **resolve_identities** - Match emails/phones/addresses to person IDs
-2. **get_person** - Get detailed person profiles
-3. **list_clusters** - Discover audience clusters
-4. **get_cluster** - Get cluster analytics
-5. **find_persons** - Build audiences based on clusters
-6. **submit_feedback** - Report data issues
-
-## 📖 Documentation
-
-- **[QUICKSTART.md](QUICKSTART.md)** - 5-minute setup for CLI
-- **[POC-README.md](POC-README.md)** - Detailed CLI documentation
-- **[watt-data-web/README.md](watt-data-web/README.md)** - Web app documentation
-- **[API Spec](api-spec.md)** - Watt Data API specification
-
-## 🔍 Usage Examples
-
-### CLI
-
-```bash
-# List available tools
-npm start
-
-# Custom query
-node agent-poc.js "Resolve email: test@example.com"
-
-# Check available models
-npm run check-models
+```
+watt-data-web/
+├── app/
+│   ├── page.tsx              # Main UI
+│   └── api/
+│       ├── chat/route.ts     # Chat endpoint
+│       └── process-csv/      # CSV processing endpoint
+├── components/
+│   ├── ChatInterface.tsx     # Chat UI component
+│   ├── FileUpload.tsx        # File upload with drag-drop
+│   └── ExportButton.tsx      # CSV export button
+├── lib/
+│   ├── mcp-agent.ts          # MCP agent logic
+│   ├── csv-processor.ts      # CSV parsing/enrichment
+│   └── chat-storage.ts       # LocalStorage for chat history
+└── .env.local                # Environment variables
 ```
 
-### Web App
-
-1. Upload CSV with email/phone/address columns
-2. Ask: "Enrich all rows with demographics"
-3. Export enriched CSV with person_id, demographics, interests
-
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────┐
-│   User      │
-│  (CLI/Web)  │
+│  Browser    │
+│  (React UI) │
 └──────┬──────┘
+       │
+       ↓
+┌──────────────┐
+│  Next.js API │
+│  Routes      │
+└──────┬───────┘
        │
        ↓
 ┌──────────────┐
@@ -169,99 +114,95 @@ npm run check-models
 └──────┬───────┘
        │
        ↓
-┌────────────────────┐
-│  Streamable HTTP   │
-│  Transport         │
-└──────┬─────────────┘
-       │
-       ↓
 ┌───────────────┐
 │  Watt Data    │
 │  MCP Server   │
 └───────────────┘
 ```
 
-## 🔑 Key Learnings
+## Features Breakdown
 
-1. **Transport Type**: Use `StreamableHTTPClientTransport` for remote MCP servers (not SSE)
-2. **Authentication**: Pass headers via `requestInit: { headers }` object
-3. **Model Availability**: Check available models with `npm run check-models`
-4. **Basic Auth Format**: `Authorization: Basic <base64>`
+### Chat Interface
+- Real-time streaming responses
+- Tool execution tracking
+- Message timestamps
+- Clear conversation history
+- Auto-scroll to latest message
 
-## 🐛 Troubleshooting
+### File Upload
+- Drag-and-drop support
+- CSV validation
+- Automatic field detection
+- Data preview with first 3 rows
+- File removal
 
-### "401 Unauthorized"
-- Verify base64 encoding: `echo -n "id:secret" | base64`
-- Check token is active in Clerk
-- Ensure `MCP_AUTH_TYPE=basic`
+### Data Processing
+- Identity resolution (email/phone/address)
+- Full profile enrichment
+- Demographics extraction
+- Interests/clusters extraction
+- Flattened JSON to CSV conversion
 
-### "Model not found"
-- Run `npm run check-models`
-- Update `CLAUDE_MODEL` in `.env`
+### Export
+- One-click CSV export
+- Includes original + enriched data
+- Proper CSV formatting
+- Custom filename support
 
-### "MCP connection failed"
-- Verify `MCP_SERVER_URL` is correct
-- Check network connection
-- Ensure `MCP_TRANSPORT_TYPE=streamable`
+## Troubleshooting
 
-## 🚀 Development
-
-### CLI Tool
-
+### "Module not found" errors
+Make sure you've installed dependencies:
 ```bash
-# Install dependencies
 npm install
-
-# Run CLI
-npm start
-
-# Check models
-npm run check-models
 ```
 
-### Web App
+### Environment variable errors
+Check that `.env.local` exists and has all required variables:
+```bash
+cat .env.local
+```
+
+### MCP connection fails
+Verify your Watt Data credentials and that the server URL is correct.
+
+### CSV upload not working
+Ensure your CSV has headers and at least one detectable field (email, phone, address, or person_id).
+
+## Development
+
+### Running in Development Mode
 
 ```bash
-cd watt-data-web
-
-# Install dependencies
-npm install
-
-# Run dev server
 npm run dev
+```
 
-# Build for production
+### Building for Production
+
+```bash
 npm run build
 npm start
 ```
 
-## 📝 Environment Variables
+### Type Checking
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key |
-| `CLAUDE_MODEL` | Yes | Claude model (e.g., claude-sonnet-4-5) |
-| `MCP_TRANSPORT_TYPE` | Yes | Transport type (streamable) |
-| `MCP_AUTH_TYPE` | Yes | Auth type (basic) |
-| `MCP_SERVER_URL` | Yes | Watt Data MCP server URL |
-| `MCP_SERVER_API_KEY` | Yes | Base64-encoded M2M token |
+```bash
+npx tsc --noEmit
+```
 
-## 🎓 Technologies
+## Technologies
 
-- **Node.js** - Runtime
-- **TypeScript** - Type safety (web app)
-- **Next.js 16** - React framework (web app)
+- **Next.js 16** - React framework with App Router
+- **TypeScript** - Type safety
+- **Tailwind CSS** - Styling
 - **Anthropic SDK** - Claude AI integration
 - **MCP SDK** - Model Context Protocol client
-- **Tailwind CSS** - Styling (web app)
-- **PapaParse** - CSV parsing (web app)
+- **PapaParse** - CSV parsing
 
-## 📄 License
+## License
 
 ISC
 
 ---
 
-**Built with Claude Code**
-
-Powered by Anthropic Claude & Watt Data MCP Server
+Built with Claude Code & Watt Data MCP Server

@@ -1,25 +1,30 @@
 {
-  "name": "watt-data",
-  "version": "1.0.0",
-  "type": "module",
-  "description": "Proof of concept: Claude Agent SDK with MCP Server via API Key",
-  "main": "agent-poc.js",
+  "name": "watt-data-web",
+  "version": "0.1.0",
+  "private": true,
   "scripts": {
-    "start": "node agent-poc.js",
-    "check-models": "node check-models.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
   },
-  "keywords": [
-    "claude",
-    "mcp",
-    "agent",
-    "anthropic"
-  ],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
     "@modelcontextprotocol/sdk": "^1.21.1",
-    "dotenv": "^17.2.3"
+    "@types/papaparse": "^5.5.0",
+    "next": "16.0.3",
+    "papaparse": "^5.5.3",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.3",
+    "tailwindcss": "^4",
+    "typescript": "^5"
   }
 }
