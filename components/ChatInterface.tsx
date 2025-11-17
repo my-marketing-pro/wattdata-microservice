@@ -21,8 +21,12 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
 
   // Scroll to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    // Use setTimeout to ensure DOM has updated
+    const timer = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [messages, isLoading]);
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
@@ -97,9 +101,9 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-lg shadow-lg">
+    <div className="h-full flex flex-col bg-white rounded-lg shadow-lg">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b">
+      <div className="flex items-center justify-between p-4 border-b flex-shrink-0">
         <h2 className="text-xl font-semibold text-gray-800">Watt Data Assistant</h2>
         <button
           onClick={handleClear}
@@ -110,7 +114,7 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-scroll p-4 space-y-4" style={{ minHeight: 0 }}>
         {messages.length === 0 && (
           <div className="text-center text-gray-500 mt-8">
             <p className="text-lg mb-2">👋 Hi! I'm your Watt Data assistant.</p>
@@ -167,7 +171,7 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
       </div>
 
       {/* Input */}
-      <div className="border-t p-4">
+      <div className="flex-shrink-0 border-t p-4">
         <div className="flex space-x-2">
           <textarea
             value={input}

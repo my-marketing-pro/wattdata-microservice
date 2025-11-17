@@ -1,10 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    turbo: {
-      root: process.cwd(),
-    },
-  },
+  // Turbopack is enabled by default in Next.js 15+
+  // No need for experimental.turbo configuration
 };
 
 export default nextConfig;

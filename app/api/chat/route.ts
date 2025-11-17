@@ -1,6 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAgent } from '@/lib/mcp-agent';
 import { ChatMessage } from '@/lib/mcp-agent';
+import { EnrichedRow, flattenProfileData } from '@/lib/csv-processor';
+
+/**
+ * Process tool call results to extract enriched person data
+ */
+function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[] {
+  const enrichedRows: EnrichedRow[] = [];
+
+  // Find all get_person tool calls with results
+  const personDataCalls = toolCalls.filter(tc => tc.name === 'get_person' && tc.result);
+
+  if (personDataCalls.length === 0) {
+    return enrichedRows;
+  }
+
+  // Map person_ids to their enriched data
+  const personDataMap = new Map<string, any>();
+
+  for (const call of personDataCalls) {
+    try {
+      // Parse the result content
+      const resultContent = typeof call.result.content === 'string'
+        ? JSON.parse(call.result.content)
+        : call.result.content;
+
+      // Extract person data from the result
+      let personData = null;
+      if (Array.isArray(resultContent)) {
+        personData = resultContent[0]?.content?.data;
+      } else if (resultContent.content?.data) {
+        personData = resultContent.content.data;
+      } else if (resultContent.data) {
+        personData = resultContent.data;
+      }
+
+      if (personData && personData.person_id) {
+        personDataMap.set(personData.person_id, personData);
+      }
+    } catch (error) {
+      console.error('Error parsing person data:', error);
+    }
+  }
+
+  // Merge enriched data with original rows
+  for (const row of uploadedData.rows) {
+    const enrichedRow: EnrichedRow = { ...row };
+
+    // Try to find matching person data by person_id
+    const personIdField = uploadedData.detectedFields?.personIds;
+    const personId = personIdField ? row[personIdField] : null;
+
+    if (personId && personDataMap.has(personId)) {
+      const personData = personDataMap.get(personId);
+
+      // Flatten and add all person data fields
+      const flattenedData = flattenProfileData(personData);
+      Object.assign(enrichedRow, flattenedData);
+    }
+
+    enrichedRows.push(enrichedRow);
+  }
+
+  return enrichedRows;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -73,9 +137,16 @@ Please help me enrich this data using the Watt Data tools.
     // Get response from agent
     const result = await agent.chat(chatMessages);
 
+    // Process tool calls to extract enriched data
+    let enrichedData = null;
+    if (result.toolCalls && result.toolCalls.length > 0 && uploadedData) {
+      enrichedData = processEnrichedData(result.toolCalls, uploadedData);
+    }
+
     return NextResponse.json({
       response: result.response,
       toolCalls: result.toolCalls,
+      enrichedData: enrichedData,
     });
 
   } catch (error) {

@@ -22,9 +22,9 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="h-screen flex flex-col bg-gradient-to-br from-blue-50 to-indigo-100 overflow-hidden">
       {/* Header */}
-      <header className="bg-white shadow-sm">
+      <header className="flex-shrink-0 bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div>
@@ -37,19 +37,20 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-12rem)]">
+      <main className="flex-1 min-h-0">
+        <div className="h-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
           {/* Left Sidebar - File Upload & Data Preview */}
-          <div className="lg:col-span-1 space-y-4">
+          <div className="lg:col-span-1 flex flex-col gap-4 overflow-y-auto">
             {/* File Upload */}
-            <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="bg-white rounded-lg shadow-lg p-6 flex-shrink-0">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Upload CSV</h2>
               <FileUpload onFileUploaded={handleFileUploaded} />
             </div>
 
             {/* Data Preview */}
             {uploadedData && (
-              <div className="bg-white rounded-lg shadow-lg p-6 flex-1 overflow-hidden flex flex-col">
+              <div className="bg-white rounded-lg shadow-lg p-6 flex-shrink-0">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold text-gray-800">Data Preview</h2>
                   <button
@@ -61,8 +62,7 @@ export default function Home() {
                 </div>
 
                 {showDataPreview && (
-                  <div className="flex-1 overflow-auto">
-                    <div className="space-y-3">
+                  <div className="space-y-3">
                       <div className="bg-blue-50 p-3 rounded">
                         <p className="text-sm font-medium text-blue-800">Total Rows:</p>
                         <p className="text-lg font-bold text-blue-900">{uploadedData.rows.length}</p>
@@ -123,26 +123,26 @@ export default function Home() {
                         </div>
                       )}
                     </div>
-                  </div>
                 )}
               </div>
             )}
           </div>
 
           {/* Right Side - Chat Interface */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 min-h-0">
             <ChatInterface
               uploadedData={uploadedData}
               onDataEnriched={handleDataEnriched}
             />
           </div>
+          </div>
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-gray-200 mt-8">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <p className="text-center text-sm text-gray-500">
+      <footer className="flex-shrink-0 bg-white border-t border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
+          <p className="text-center text-xs text-gray-500">
             Powered by Anthropic Claude & Watt Data MCP Server
           </p>
         </div>
