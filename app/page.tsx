@@ -18,6 +18,8 @@ export default function Home() {
   };
 
   const handleDataEnriched = (data: EnrichedRow[]) => {
+    console.log('Page: Setting enriched data with', data.length, 'rows');
+    console.log('Page: First row sample:', JSON.stringify(data[0]).substring(0, 200));
     setEnrichedData(data);
   };
 

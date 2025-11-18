@@ -120,10 +120,37 @@ export function exportToCSV(data: EnrichedRow[], filename: string = 'enriched-da
 
 /**
  * Flatten nested profile data into a single row
+ * Handles MCP's format where enrichment data is in JSON strings (t1.json, t2.json, etc.)
  */
 export function flattenProfileData(profile: any): Record<string, string> {
   const flattened: Record<string, string> = {};
 
+  // First, parse all JSON string fields (t1.json, t2.json, etc.)
+  const parsedData: any = {};
+
+  for (const key in profile) {
+    const value = profile[key];
+
+    // If it's a .json field, try to parse it
+    if (key.endsWith('.json') && typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        // Merge parsed data into parsedData
+        Object.assign(parsedData, parsed);
+      } catch (e) {
+        // If parsing fails, just store as string
+        flattened[key] = value;
+      }
+    } else if (Array.isArray(value)) {
+      // Arrays get joined with commas
+      flattened[key] = value.join(', ');
+    } else if (value !== null && value !== undefined) {
+      // Direct values
+      flattened[key] = String(value);
+    }
+  }
+
+  // Now flatten the parsed JSON data
   function flatten(obj: any, prefix = '') {
     for (const key in obj) {
       const value = obj[key];
@@ -132,7 +159,15 @@ export function flattenProfileData(profile: any): Record<string, string> {
       if (value === null || value === undefined) {
         flattened[newKey] = '';
       } else if (typeof value === 'object' && !Array.isArray(value)) {
-        flatten(value, newKey);
+        // Handle nested objects like { cluster_id: "...", value: "..." }
+        if ('value' in value) {
+          flattened[newKey] = String(value.value);
+          if ('cluster_id' in value) {
+            flattened[`${newKey}_cluster_id`] = String(value.cluster_id);
+          }
+        } else {
+          flatten(value, newKey);
+        }
       } else if (Array.isArray(value)) {
         flattened[newKey] = value.join(', ');
       } else {
@@ -141,7 +176,7 @@ export function flattenProfileData(profile: any): Record<string, string> {
     }
   }
 
-  flatten(profile);
+  flatten(parsedData);
   return flattened;
 }
 

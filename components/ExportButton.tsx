@@ -8,12 +8,16 @@ interface ExportButtonProps {
 }
 
 export default function ExportButton({ data, filename = 'enriched-data.csv' }: ExportButtonProps) {
+  console.log('ExportButton: data is', data ? `${data.length} rows` : 'null');
+
   const handleExport = () => {
     if (!data || data.length === 0) {
       alert('No data to export');
       return;
     }
 
+    console.log('ExportButton: Exporting', data.length, 'rows');
+    console.log('ExportButton: First row sample:', JSON.stringify(data[0]).substring(0, 300));
     exportToCSV(data, filename);
   };
 

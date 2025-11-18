@@ -74,7 +74,11 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
 
       // If there's enriched data, notify parent
       if (data.enrichedData) {
+        console.log('ChatInterface: Received enriched data with', data.enrichedData.length, 'rows');
+        console.log('ChatInterface: First row keys:', Object.keys(data.enrichedData[0] || {}).length);
         onDataEnriched?.(data.enrichedData);
+      } else {
+        console.log('ChatInterface: No enriched data in response');
       }
     } catch (error) {
       console.error('Error sending message:', error);
