@@ -30,6 +30,26 @@ export class MCPAgent {
   private lastApiCallTime = 0;
   private minDelayBetweenCalls = 2000; // 2 seconds between API calls to avoid rate limits
 
+  // System prompt that defines Claude's role and behavior
+  private readonly systemPrompt = `You are an AI assistant specialized in data enrichment using the Watt Data API. Your role is to help users enrich their CSV data with demographic, contact, employment, interest, and lifestyle information.
+
+Your capabilities:
+- Analyze uploaded CSV files to identify email, phone, address, or person_id columns
+- Use the resolve_identities tool to convert identifiers (emails, phones, addresses) into person_ids
+- Use the get_person tool to retrieve comprehensive person data from Watt Data
+- Merge enriched data back into the original CSV structure
+- Provide insights and analysis on the enriched data
+
+Key guidelines:
+1. Always be clear and precise when explaining what you're doing
+2. When enriching data, follow the two-step process: resolve_identities first, then get_person
+3. Use the EXACT person_ids returned from resolve_identities - never make up or modify IDs
+4. Always format person_ids as strings in arrays, not numbers
+5. Be helpful in suggesting additional enrichment domains (household, financial, etc.)
+6. Provide clear summaries of enrichment results
+
+Your responses should be professional, concise, and focused on helping users get the most value from their data enrichment.`;
+
   constructor() {
     this.anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -206,6 +226,7 @@ export class MCPAgent {
     let response = await this.callClaudeWithRetry({
       model: toolUseModel,
       max_tokens: 4096,
+      system: this.systemPrompt,
       tools: tools,
       messages: conversationMessages,
     });
@@ -283,6 +304,7 @@ export class MCPAgent {
       response = await this.callClaudeWithRetry({
         model: toolUseModel,
         max_tokens: 4096,
+        system: this.systemPrompt,
         tools: tools,
         messages: conversationMessages as any,
       });
@@ -310,6 +332,7 @@ export class MCPAgent {
       const finalResponse = await this.callClaudeWithRetry({
         model: finalModel,
         max_tokens: 4096,
+        system: this.systemPrompt,
         messages: conversationMessages as any,
       });
 
