@@ -10,6 +10,9 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
   const enrichedRows: EnrichedRow[] = [];
 
   // Step 1: Extract person_id mappings from resolve_identities calls
+  // Note: When multiple person_ids are associated with the same identifier (phone/email),
+  // we keep the last one encountered. This happens when the MCP server returns multiple
+  // profiles for the same contact information.
   const identifierToPersonIdMap = new Map<string, string>();
   const resolveIdentitiesCalls = toolCalls.filter(tc => tc.name === 'resolve_identities' && tc.result);
 

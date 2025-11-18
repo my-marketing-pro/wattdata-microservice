@@ -104,17 +104,57 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
     setMessages([]);
   };
 
+  const handleCopyChat = () => {
+    if (messages.length === 0) {
+      alert('No messages to copy');
+      return;
+    }
+
+    // Format the conversation as text
+    const chatText = messages.map((message) => {
+      const role = message.role === 'user' ? 'User' : 'Assistant';
+      const timestamp = new Date(message.timestamp).toLocaleString();
+      let text = `[${timestamp}] ${role}:\n${message.content}\n`;
+
+      // Add tool calls if present
+      if (message.toolCalls && message.toolCalls.length > 0) {
+        text += '\nTools used:\n';
+        message.toolCalls.forEach((tool) => {
+          text += `- ${tool.name}\n`;
+        });
+      }
+
+      return text;
+    }).join('\n---\n\n');
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(chatText).then(() => {
+      alert('Chat copied to clipboard!');
+    }).catch((err) => {
+      console.error('Failed to copy:', err);
+      alert('Failed to copy chat to clipboard');
+    });
+  };
+
   return (
     <div className="h-full flex flex-col bg-white rounded-lg shadow-lg">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b flex-shrink-0">
         <h2 className="text-xl font-semibold text-gray-800">Watt Data Assistant</h2>
-        <button
-          onClick={handleClear}
-          className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
-        >
-          Clear Chat
-        </button>
+        <div className="flex space-x-2">
+          <button
+            onClick={handleCopyChat}
+            className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
+          >
+            Copy Chat
+          </button>
+          <button
+            onClick={handleClear}
+            className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
+          >
+            Clear Chat
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -182,7 +222,7 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyPress}
             placeholder="Type your message... (Press Enter to send)"
-            className="flex-1 resize-none border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="flex-1 resize-none border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder:text-gray-400"
             rows={2}
             disabled={isLoading}
           />

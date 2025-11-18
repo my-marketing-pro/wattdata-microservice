@@ -131,22 +131,50 @@ export function flattenProfileData(profile: any): Record<string, string> {
   for (const key in profile) {
     const value = profile[key];
 
-    // If it's a .json field, try to parse it
-    if (key.endsWith('.json') && typeof value === 'string') {
-      try {
-        const parsed = JSON.parse(value);
-        // Merge parsed data into parsedData
-        Object.assign(parsedData, parsed);
-      } catch (e) {
-        // If parsing fails, just store as string
-        flattened[key] = value;
+    // If it's a .json field, handle it specially - DO NOT add to flattened output
+    if (key.endsWith('.json')) {
+      if (typeof value === 'string') {
+        // Parse JSON string
+        try {
+          const parsed = JSON.parse(value);
+          // Merge parsed data into parsedData
+          Object.assign(parsedData, parsed);
+        } catch (e) {
+          // If parsing fails, skip it (don't include raw JSON strings in output)
+          console.warn(`Failed to parse ${key}:`, e);
+        }
+      } else if (typeof value === 'object' && value !== null) {
+        // If it's already an object, merge it directly
+        Object.assign(parsedData, value);
       }
+      // Skip adding .json fields to the flattened output
     } else if (Array.isArray(value)) {
       // Arrays get joined with commas
       flattened[key] = value.join(', ');
+    } else if (typeof value === 'object' && value !== null) {
+      // Handle non-.json objects by flattening them with the key as prefix
+      flattenObject(value, key, flattened);
     } else if (value !== null && value !== undefined) {
       // Direct values
       flattened[key] = String(value);
+    }
+  }
+
+  // Helper function to flatten nested objects
+  function flattenObject(obj: any, prefix: string, target: Record<string, string>) {
+    for (const k in obj) {
+      const v = obj[k];
+      const newKey = `${prefix}_${k}`;
+
+      if (v === null || v === undefined) {
+        target[newKey] = '';
+      } else if (Array.isArray(v)) {
+        target[newKey] = v.join(', ');
+      } else if (typeof v === 'object') {
+        flattenObject(v, newKey, target);
+      } else {
+        target[newKey] = String(v);
+      }
     }
   }
 

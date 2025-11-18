@@ -59,7 +59,8 @@ next-env.d.ts
 
 # User uploaded files (if you don't want to commit test CSVs)
 # uploads/
-# *.csv
+*.csv
+*.txt
 
 # Local development
 .vercel
