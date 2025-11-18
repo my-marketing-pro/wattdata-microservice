@@ -74,6 +74,11 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
 
   console.log(`Total identifier mappings: ${identifierToPersonIdMap.size}`);
 
+  // Log all unique person IDs from resolve_identities for debugging
+  const allResolvedPersonIds = Array.from(new Set(Array.from(identifierToPersonIdMap.values())));
+  console.log(`Unique person_ids from resolve_identities: ${allResolvedPersonIds.length}`);
+  console.log(`Sample resolved person_ids:`, allResolvedPersonIds.slice(0, 10));
+
   // Step 2: Extract enriched person data from get_person calls
   const personDataMap = new Map<string, any>();
   const personDataCalls = toolCalls.filter(tc => tc.name === 'get_person' && tc.result);
@@ -82,6 +87,10 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
     try {
       console.log('=== GET_PERSON CALL ===');
       console.log('Input:', JSON.stringify(call.input, null, 2));
+
+      // Log requested person_ids for debugging
+      const requestedPersonIds = call.input?.person_ids || [];
+      console.log(`Requested ${requestedPersonIds.length} person_ids`);
 
       let resultContent = call.result.content;
 
@@ -93,6 +102,13 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
       // If it's an array with text field, parse that
       if (Array.isArray(resultContent) && resultContent[0]?.type === 'text') {
         console.log('Raw text content:', resultContent[0].text.substring(0, 500) + '...');
+
+        // Check if it's an MCP error message
+        if (resultContent[0].text.startsWith('MCP error')) {
+          console.error('MCP Error returned from get_person:', resultContent[0].text);
+          continue; // Skip this failed call and move to next one
+        }
+
         resultContent = JSON.parse(resultContent[0].text);
       }
 
@@ -122,6 +138,15 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
   }
 
   console.log(`Total person data entries: ${personDataMap.size}`);
+
+  // Check for mismatch between resolved and retrieved person_ids
+  const retrievedPersonIds = Array.from(personDataMap.keys());
+  const missingPersonIds = allResolvedPersonIds.filter(id => !personDataMap.has(id));
+  if (missingPersonIds.length > 0) {
+    console.warn(`⚠️  WARNING: ${missingPersonIds.length} person_ids were resolved but NOT retrieved from get_person!`);
+    console.warn(`Missing person_ids:`, missingPersonIds.slice(0, 10));
+    console.warn(`This means the chatbot called get_person with different person_ids than what resolve_identities returned.`);
+  }
   console.log('Sample identifier mappings:', Array.from(identifierToPersonIdMap.entries()).slice(0, 5));
 
   // Step 3: Merge enriched data with original rows
@@ -212,16 +237,30 @@ export async function POST(request: NextRequest) {
     let chatMessages: ChatMessage[] = messages;
 
     if (uploadedData && uploadedData.rows && uploadedData.rows.length > 0) {
+      // Check if data is already enriched by looking for enrichment fields
+      const firstRow = uploadedData.rows[0];
+      const isAlreadyEnriched = firstRow && ('person_id' in firstRow || 'first_name' in firstRow || 't0.person_id' in firstRow);
+
       // Add context about uploaded data
       const dataContext = `
-I have uploaded a CSV file with the following information:
+I have ${isAlreadyEnriched ? 'previously enriched' : 'uploaded a'} CSV file with the following information:
 - Total rows: ${uploadedData.rows.length}
-- Detected fields: ${JSON.stringify(uploadedData.detectedFields)}
-- Column headers: ${uploadedData.headers.join(', ')}
+${isAlreadyEnriched ? `- Data status: Previously enriched with demographic and interest data` : `- Detected fields: ${JSON.stringify(uploadedData.detectedFields)}`}
+- Column headers: ${uploadedData.headers.slice(0, 10).join(', ')}${uploadedData.headers.length > 10 ? ` ... (${uploadedData.headers.length} total columns)` : ''}
 - First 3 rows (sample):
-${JSON.stringify(uploadedData.rows.slice(0, 3), null, 2)}
+${JSON.stringify(uploadedData.rows.slice(0, 3), null, 2).substring(0, 2000)}...
 
-IMPORTANT: To enrich this data, you MUST follow these steps:
+${isAlreadyEnriched ?
+`The data has already been enriched with person information. You can:
+- Add additional enrichment by calling get_person with additional domains (e.g., household, financial) for person_ids that are already in the data
+- Update existing records with more data
+- Analyze the enriched data to provide insights
+
+**CRITICAL**: When calling get_person, the person_ids parameter MUST be an array of STRINGS, not numbers!
+✓ Correct: {"person_ids": ["123456", "789012"], ...}
+✗ Wrong: {"person_ids": [123456, 789012], ...}`
+:
+`IMPORTANT: To enrich this data, you MUST follow these steps:
 
 Step 1: Use resolve_identities to get person_ids from the identifiers (emails, phones, or addresses)
 Format for email:
@@ -231,21 +270,34 @@ Format for email:
   "identifiers": ["email1@example.com", "email2@example.com"]
 }
 
-Step 2: Use get_person with the person_ids you received to fetch demographic and enrichment data
-You should call get_person with these domains to get comprehensive data:
-- name
-- demographic (age, gender, etc.)
-- email
-- phone
-- address
-- employment
-- interest
-- lifestyle
+Step 2: Use get_person with the EXACT person_ids you received from resolve_identities
 
-Example: After getting person_id 123456 from resolve_identities, call:
-get_person with person_id=123456 and domains=["name","demographic","email","phone","address","employment","interest","lifestyle"]
+**CRITICAL REQUIREMENTS**:
+1. The person_ids parameter MUST be an array of STRINGS, not numbers!
+   ✓ Correct: {"person_ids": ["123456", "789012"], ...}
+   ✗ Wrong: {"person_ids": [123456, 789012], ...}
 
-Please help me enrich this data by completing BOTH steps.
+2. You MUST use the EXACT person_ids that were returned from resolve_identities in Step 1
+   - Do NOT use different person_ids
+   - Do NOT make up person_ids
+   - Use ALL person_ids from the resolve_identities response
+
+3. Call get_person with these domains to get comprehensive data:
+   - name
+   - demographic (age, gender, etc.)
+   - email
+   - phone
+   - address
+   - employment
+   - interest
+   - lifestyle
+
+Example workflow:
+1. Call resolve_identities → Get back person_ids: ["123456", "789012", "111222"]
+2. Call get_person with person_ids=["123456", "789012", "111222"] (use EXACT IDs from step 1!)
+
+Please help me enrich this data by completing BOTH steps with the EXACT person_ids.`}
+
 `;
 
       // Only add context if this is the first message about the uploaded data

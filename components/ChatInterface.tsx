@@ -5,10 +5,11 @@ import { StoredMessage, getMessages, addMessage, clearCurrentSession } from '@/l
 
 interface ChatInterfaceProps {
   uploadedData?: any;
+  enrichedData?: any;
   onDataEnriched?: (data: any) => void;
 }
 
-export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInterfaceProps) {
+export default function ChatInterface({ uploadedData, enrichedData, onDataEnriched }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -43,6 +44,20 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
     setMessages(prev => [...prev, userMsg]);
 
     try {
+      // Use enriched data if available, otherwise use uploaded data
+      // When enriched data exists, we need to reconstruct the data structure
+      let dataToSend = uploadedData;
+
+      if (enrichedData && enrichedData.length > 0 && uploadedData) {
+        // Use enriched data as the rows, but keep the original metadata
+        dataToSend = {
+          ...uploadedData,
+          rows: enrichedData,
+          // Update headers to include all enriched fields from the first row
+          headers: Object.keys(enrichedData[0]),
+        };
+      }
+
       // Send to API
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -54,7 +69,7 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
             role: m.role,
             content: m.content,
           })),
-          uploadedData,
+          uploadedData: dataToSend,
         }),
       });
 
@@ -75,7 +90,9 @@ export default function ChatInterface({ uploadedData, onDataEnriched }: ChatInte
       // If there's enriched data, notify parent
       if (data.enrichedData) {
         console.log('ChatInterface: Received enriched data with', data.enrichedData.length, 'rows');
-        console.log('ChatInterface: First row keys:', Object.keys(data.enrichedData[0] || {}).length);
+        console.log('ChatInterface: First row keys count:', Object.keys(data.enrichedData[0] || {}).length);
+        console.log('ChatInterface: First row sample keys:', Object.keys(data.enrichedData[0] || {}).slice(0, 20).join(', '));
+        console.log('ChatInterface: First row full data:', data.enrichedData[0]);
         onDataEnriched?.(data.enrichedData);
       } else {
         console.log('ChatInterface: No enriched data in response');

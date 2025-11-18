@@ -128,20 +128,30 @@ export function flattenProfileData(profile: any): Record<string, string> {
   // First, parse all JSON string fields (t1.json, t2.json, etc.)
   const parsedData: any = {};
 
+  console.log('flattenProfileData: Processing profile with keys:', Object.keys(profile).join(', '));
+
   for (const key in profile) {
     const value = profile[key];
 
     // If it's a .json field, handle it specially - DO NOT add to flattened output
     if (key.endsWith('.json')) {
       if (typeof value === 'string') {
-        // Parse JSON string
+        // Parse JSON string - try multiple approaches for malformed JSON
         try {
           const parsed = JSON.parse(value);
           // Merge parsed data into parsedData
           Object.assign(parsedData, parsed);
         } catch (e) {
-          // If parsing fails, skip it (don't include raw JSON strings in output)
-          console.warn(`Failed to parse ${key}:`, e);
+          // Try to fix common JSON issues: single quotes, missing quotes on keys
+          try {
+            // Replace single quotes with double quotes and try again
+            const fixedValue = value.replace(/'/g, '"');
+            const parsed = JSON.parse(fixedValue);
+            Object.assign(parsedData, parsed);
+          } catch (e2) {
+            // If parsing still fails, skip it (don't include raw JSON strings in output)
+            console.warn(`Failed to parse ${key} even after attempting fixes:`, String(e2).substring(0, 100));
+          }
         }
       } else if (typeof value === 'object' && value !== null) {
         // If it's already an object, merge it directly
@@ -205,6 +215,10 @@ export function flattenProfileData(profile: any): Record<string, string> {
   }
 
   flatten(parsedData);
+
+  console.log('flattenProfileData: Returning flattened data with', Object.keys(flattened).length, 'keys');
+  console.log('flattenProfileData: Sample keys:', Object.keys(flattened).slice(0, 10).join(', '));
+
   return flattened;
 }
 

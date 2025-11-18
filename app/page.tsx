@@ -134,6 +134,7 @@ export default function Home() {
           <div className="lg:col-span-2 min-h-0">
             <ChatInterface
               uploadedData={uploadedData}
+              enrichedData={enrichedData}
               onDataEnriched={handleDataEnriched}
             />
           </div>
