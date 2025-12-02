@@ -49,7 +49,7 @@ export default function Home() {
         <div className="h-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
           {/* Left Sidebar - File Upload & Data Preview */}
-          <div className="lg:col-span-1 flex flex-col gap-4 overflow-y-auto">
+          <div className="lg:col-span-1 flex flex-col gap-4 h-full min-h-0">
             {/* File Upload */}
             <div className="bg-white rounded-lg shadow-lg p-6 flex-shrink-0">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Upload CSV</h2>
@@ -58,7 +58,7 @@ export default function Home() {
 
             {/* Data Preview */}
             {uploadedData && (
-              <div className="bg-white rounded-lg shadow-lg p-6 flex-shrink-0">
+              <div className="bg-white rounded-lg shadow-lg p-6 flex flex-col flex-1 min-h-0">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold text-gray-800">Data Preview</h2>
                   <button
@@ -70,7 +70,7 @@ export default function Home() {
                 </div>
 
                 {showDataPreview && (
-                  <div className="space-y-3">
+                  <div className="space-y-3 flex-1 min-h-0">
                       <div className="bg-blue-50 p-3 rounded">
                         <p className="text-sm font-medium text-blue-800">Total Rows:</p>
                         <p className="text-lg font-bold text-blue-900">{uploadedData.rows.length}</p>
@@ -94,9 +94,9 @@ export default function Home() {
                         </div>
                       </div>
 
-                      <div>
+                      <div className="flex flex-col min-h-0">
                         <p className="text-sm font-medium text-gray-700 mb-2">Uploaded Data Preview:</p>
-                        <div className="bg-gray-50 p-2 rounded text-xs overflow-auto max-h-64">
+                        <div className="bg-gray-50 p-2 rounded text-xs overflow-auto max-h-52">
                           <table className="min-w-full">
                             <thead>
                               <tr>

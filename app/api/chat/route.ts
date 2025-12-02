@@ -12,6 +12,71 @@ interface EnrichmentResult {
 
 type IdentifierType = 'email' | 'phone' | 'address';
 
+const PREVIEW_FIELDS = {
+  name: ['Name', 'name', 'first_name'],
+  email: ['Email', 'email', 'email1'],
+  phone: ['Phone', 'phone', 'phone1'],
+};
+
+const findFirstValue = (row: EnrichedRow, keys: string[]): string | undefined => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+};
+
+const formatPreviewRows = (rows: EnrichedRow[]): string => {
+  if (!rows.length) return '';
+  const previewCount = Math.min(rows.length, 3);
+  const lines: string[] = [];
+
+  for (let i = 0; i < previewCount; i++) {
+    const row = rows[i];
+    const name = findFirstValue(row, PREVIEW_FIELDS.name) || 'Unknown name';
+    const email = findFirstValue(row, PREVIEW_FIELDS.email) || 'N/A';
+    const phone = findFirstValue(row, PREVIEW_FIELDS.phone) || 'N/A';
+    const personId = row.person_id || row['t0.person_id'] || 'N/A';
+
+    lines.push(`${i + 1}. ${name} | Email: ${email} | Phone: ${phone} | person_id: ${personId}`);
+  }
+
+  return `Sample rows:\n${lines.join('\n')}`;
+};
+
+const buildUserFacingSummary = (
+  resolvedCount: number,
+  enrichedCount: number,
+  enrichedData: EnrichedRow[] | null,
+  exportLinks: string[]
+): string => {
+  const lines: string[] = [];
+  const headlineParts: string[] = [];
+
+  if (resolvedCount > 0) {
+    headlineParts.push(`resolved ${resolvedCount} person_id${resolvedCount === 1 ? '' : 's'}`);
+  }
+  if (enrichedCount > 0) {
+    headlineParts.push(`enriched ${enrichedCount} row${enrichedCount === 1 ? '' : 's'}`);
+  }
+
+  if (headlineParts.length > 0) {
+    lines.push(`Enrichment summary: ${headlineParts.join(' and ')}.`);
+  }
+
+  if (enrichedData && enrichedData.length > 0) {
+    lines.push(formatPreviewRows(enrichedData));
+  }
+
+  if (exportLinks.length > 0) {
+    lines.push('The enriched CSV is available from the Export button.');
+  }
+
+  return lines.join('\n\n');
+};
+
 const normalizeIdentifier = (value: string, type: IdentifierType): string => {
   if (!value) return '';
   let trimmed = value.trim();
@@ -674,20 +739,14 @@ Please help me enrich this data by completing BOTH steps with the EXACT person_i
       }
     }
 
-    const summaryParts = [];
-    if (resolvedCount > 0) {
-      summaryParts.push(`Resolved ${resolvedCount} unique person_ids.`);
+    let userFacingResponse = finalResponseText;
+    if (resolvedCount > 0 || enrichedCount > 0) {
+      const summaryText = buildUserFacingSummary(resolvedCount, enrichedCount, enrichedData, exportLinks);
+      userFacingResponse = summaryText || finalResponseText;
     }
-    if (enrichedCount > 0) {
-      summaryParts.push(`Enriched ${enrichedCount} rows in the uploaded CSV.`);
-    }
-
-    const appendedSummary = summaryParts.length > 0
-      ? `${summaryParts.join(' ')}${finalResponseText ? '\n\n' + finalResponseText : ''}`
-      : finalResponseText;
 
     return NextResponse.json({
-      response: appendedSummary,
+      response: userFacingResponse,
       toolCalls,
       enrichedData,
       exportLinks,

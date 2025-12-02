@@ -149,14 +149,6 @@ export default function ChatInterface({ uploadedData, enrichedData, onDataEnrich
       const timestamp = new Date(message.timestamp).toLocaleString();
       let text = `[${timestamp}] ${role}:\n${message.content}\n`;
 
-      // Add tool calls if present
-      if (message.toolCalls && message.toolCalls.length > 0) {
-        text += '\nTools used:\n';
-        message.toolCalls.forEach((tool) => {
-          text += `- ${tool.name}\n`;
-        });
-      }
-
       return text;
     }).join('\n---\n\n');
 
@@ -212,18 +204,6 @@ export default function ChatInterface({ uploadedData, enrichedData, onDataEnrich
               }`}
             >
               <div className="whitespace-pre-wrap break-words">{message.content}</div>
-
-              {/* Show tool calls if present */}
-              {message.toolCalls && message.toolCalls.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-gray-300 text-xs">
-                  <p className="font-semibold mb-1">Tools used:</p>
-                  {message.toolCalls.map((tool, idx) => (
-                    <div key={idx} className="mb-1">
-                      <span className="font-mono">{tool.name}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
 
               <div className="text-xs mt-1 opacity-70">
                 {new Date(message.timestamp).toLocaleTimeString()}
