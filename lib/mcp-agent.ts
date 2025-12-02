@@ -199,7 +199,7 @@ Your responses should be professional, concise, and focused on helping users get
     const toolsList = await this.mcpClient.listTools();
     this.availableTools = toolsList.tools.map(tool => ({
       name: tool.name,
-      description: tool.description,
+      description: tool.description || '',
       inputSchema: tool.inputSchema,
     }));
 
@@ -580,11 +580,6 @@ Your responses should be professional, concise, and focused on helping users get
     const model = this.geminiClient.getGenerativeModel({
       model: this.geminiModelName,
       tools: geminiTools.length > 0 ? geminiTools : undefined,
-      toolConfig: geminiTools.length > 0 ? {
-        functionCallingConfig: {
-          mode: 'AUTO',
-        },
-      } : undefined,
     });
 
     const conversationContents: Content[] = this.convertMessagesToGeminiContents(messages);

@@ -77,6 +77,14 @@ const buildUserFacingSummary = (
   return lines.join('\n\n');
 };
 
+const logError = (message: string, error: unknown) => {
+  if (error instanceof Error) {
+    console.error(message, error.message, error.stack);
+  } else {
+    console.error(message, error);
+  }
+};
+
 const normalizeIdentifier = (value: string, type: IdentifierType): string => {
   if (!value) return '';
   let trimmed = value.trim();
@@ -241,7 +249,7 @@ async function processEnrichedData(
         }
       }
     } catch (error) {
-      console.error('Error parsing resolve_identities data:', error, error.stack);
+      logError('Error parsing resolve_identities data:', error);
     }
   };
 
@@ -319,7 +327,7 @@ async function processEnrichedData(
         toolCalls.push(autoCall);
         processResolveCall(autoCall);
       } catch (error) {
-        console.error(`Failed auto resolve for ${identifierType}`, error);
+        logError(`Failed auto resolve for ${identifierType}`, error);
       }
     }
   };
@@ -413,7 +421,7 @@ async function processEnrichedData(
             : [];
         await processProfiles(profiles);
       } catch (error) {
-        console.error('Failed to fetch export data', error);
+        logError('Failed to fetch export data', error);
       }
     }
   };
@@ -452,7 +460,7 @@ async function processEnrichedData(
 
       await processProfiles(resultContent.profiles);
     } catch (error) {
-      console.error('Error parsing person data:', error, error.stack);
+      logError('Error parsing person data:', error);
     }
   };
 
@@ -502,7 +510,7 @@ async function processEnrichedData(
         toolCalls.push(autoCall);
         await processPersonCall(autoCall);
       } catch (error) {
-        console.error('Failed to auto-fetch person data for chunk', chunk, error);
+        logError('Failed to auto-fetch person data for chunk', error);
       }
     }
   }
@@ -755,7 +763,7 @@ Please help me enrich this data by completing BOTH steps with the EXACT person_i
     });
 
   } catch (error) {
-    console.error('Error in chat API:', error);
+    logError('Error in chat API:', error);
     return NextResponse.json(
       { error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }

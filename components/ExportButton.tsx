@@ -72,11 +72,11 @@ export default function ExportButton({ data, filename = 'enriched-data.csv', dow
     const rows: EnrichedRow[] = [];
     for (const entry of profilesArray) {
       const record = (entry as { domains?: Record<string, unknown> }) ?? {};
-      const domains = record.domains || record;
-      if (!domains) continue;
+      const domains = (record.domains ?? record) as Record<string, unknown>;
       const flattened = flattenProfileData(domains);
-      if (!flattened.person_id && typeof domains['t0.person_id'] === 'string') {
-        flattened.person_id = String(domains['t0.person_id']);
+      const personIdValue = domains['t0.person_id'];
+      if (!flattened.person_id && typeof personIdValue === 'string') {
+        flattened.person_id = personIdValue.trim();
       }
       rows.push(flattened);
     }

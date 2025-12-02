@@ -1,7 +1,7 @@
 import Papa from 'papaparse';
 
 export interface CSVRow {
-  [key: string]: string;
+  [key: string]: string | undefined;
 }
 
 export interface ParsedCSV {
