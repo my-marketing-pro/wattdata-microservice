@@ -1,13 +1,157 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAgent } from '@/lib/mcp-agent';
-import { ChatMessage } from '@/lib/mcp-agent';
+import { getAgent, MCPAgent, ChatMessage } from '@/lib/mcp-agent';
 import { EnrichedRow, flattenProfileData } from '@/lib/csv-processor';
+import { Readable } from 'stream';
+
+interface EnrichmentResult {
+  rows: EnrichedRow[];
+  exportLinks: string[];
+  resolvedCount: number;
+  enrichedCount: number;
+}
+
+type IdentifierType = 'email' | 'phone' | 'address';
+
+const PREVIEW_FIELDS = {
+  name: ['Name', 'name', 'first_name'],
+  email: ['Email', 'email', 'email1'],
+  phone: ['Phone', 'phone', 'phone1'],
+};
+
+const findFirstValue = (row: EnrichedRow, keys: string[]): string | undefined => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+};
+
+const formatPreviewRows = (rows: EnrichedRow[]): string => {
+  if (!rows.length) return '';
+  const previewCount = Math.min(rows.length, 3);
+  const lines: string[] = [];
+
+  for (let i = 0; i < previewCount; i++) {
+    const row = rows[i];
+    const name = findFirstValue(row, PREVIEW_FIELDS.name) || 'Unknown name';
+    const email = findFirstValue(row, PREVIEW_FIELDS.email) || 'N/A';
+    const phone = findFirstValue(row, PREVIEW_FIELDS.phone) || 'N/A';
+    const personId = row.person_id || row['t0.person_id'] || 'N/A';
+
+    lines.push(`${i + 1}. ${name} | Email: ${email} | Phone: ${phone} | person_id: ${personId}`);
+  }
+
+  return `Sample rows:\n${lines.join('\n')}`;
+};
+
+const buildUserFacingSummary = (
+  resolvedCount: number,
+  enrichedCount: number,
+  enrichedData: EnrichedRow[] | null,
+  exportLinks: string[]
+): string => {
+  const lines: string[] = [];
+  const headlineParts: string[] = [];
+
+  if (resolvedCount > 0) {
+    headlineParts.push(`resolved ${resolvedCount} person_id${resolvedCount === 1 ? '' : 's'}`);
+  }
+  if (enrichedCount > 0) {
+    headlineParts.push(`enriched ${enrichedCount} row${enrichedCount === 1 ? '' : 's'}`);
+  }
+
+  if (headlineParts.length > 0) {
+    lines.push(`Enrichment summary: ${headlineParts.join(' and ')}.`);
+  }
+
+  if (enrichedData && enrichedData.length > 0) {
+    lines.push(formatPreviewRows(enrichedData));
+  }
+
+  if (exportLinks.length > 0) {
+    lines.push('The enriched CSV is available from the Export button.');
+  }
+
+  return lines.join('\n\n');
+};
+
+const normalizeIdentifier = (value: string, type: IdentifierType): string => {
+  if (!value) return '';
+  let trimmed = value.trim();
+
+  if (type === 'phone') {
+    let digits = trimmed.replace(/[^0-9]/g, '');
+    if (digits.length === 11 && digits.startsWith('1')) {
+      digits = digits.slice(1);
+    }
+    return digits;
+  }
+
+  trimmed = trimmed.toLowerCase();
+
+  if (type === 'address') {
+    trimmed = trimmed.replace(/\s+/g, ' ');
+  }
+
+  return trimmed;
+};
+
+const buildIdentifierKey = (value: unknown, type: IdentifierType): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const normalized = normalizeIdentifier(stringValue, type);
+  if (!normalized) return null;
+  return `${type}:${normalized}`;
+};
 
 /**
  * Process tool call results to extract enriched person data
  */
-function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[] {
+async function processEnrichedData(
+  agent: MCPAgent,
+  toolCalls: any[] = [],
+  uploadedData: any
+): Promise<EnrichmentResult> {
   const enrichedRows: EnrichedRow[] = [];
+  const exportLinks = new Set<string>();
+  const resolvedPersonIds = new Set<string>();
+  const emailField = uploadedData?.detectedFields?.emails;
+  const phoneField = uploadedData?.detectedFields?.phones;
+  const addressField = uploadedData?.detectedFields?.addresses;
+
+  const emailCandidates = new Map<string, string>();
+  const phoneCandidates = new Map<string, string>();
+  const addressCandidates = new Map<string, string>();
+
+  if (uploadedData?.rows) {
+    for (const row of uploadedData.rows) {
+      if (emailField && row[emailField]) {
+        const rawValue = String(row[emailField]).trim();
+        const key = buildIdentifierKey(rawValue, 'email');
+        if (key && rawValue) {
+          emailCandidates.set(key, rawValue);
+        }
+      }
+      if (phoneField && row[phoneField]) {
+        const rawValue = String(row[phoneField]).trim();
+        const key = buildIdentifierKey(rawValue, 'phone');
+        if (key && rawValue) {
+          phoneCandidates.set(key, rawValue);
+        }
+      }
+      if (addressField && row[addressField]) {
+        const rawValue = String(row[addressField]).trim();
+        const key = buildIdentifierKey(rawValue, 'address');
+        if (key && rawValue) {
+          addressCandidates.set(key, rawValue);
+        }
+      }
+    }
+  }
 
   // Step 1: Extract person_id mappings from resolve_identities calls
   // Note: When multiple person_ids are associated with the same identifier (phone/email),
@@ -15,53 +159,82 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
   // profiles for the same contact information.
   const identifierToPersonIdMap = new Map<string, string>();
   const resolveIdentitiesCalls = toolCalls.filter(tc => tc.name === 'resolve_identities' && tc.result);
+  const existingPersonIds = new Set<string>();
+  const headerLookup = new Map<string, string>();
+  if (Array.isArray(uploadedData?.headers)) {
+    for (const header of uploadedData.headers) {
+      headerLookup.set(String(header).toLowerCase(), header);
+    }
+  }
 
-  for (const call of resolveIdentitiesCalls) {
+  const getHeaderMatch = (...candidates: string[]): string | undefined => {
+    for (const candidate of candidates) {
+      const key = candidate.toLowerCase();
+      if (headerLookup.has(key)) {
+        return headerLookup.get(key);
+      }
+    }
+    return undefined;
+  };
+
+  const detectedPersonIdField = uploadedData?.detectedFields?.personIds;
+  const fallbackPersonIdField = getHeaderMatch('person_id', 'personid', 't0.person_id', 't0.personid');
+  const personIdFieldCandidates = [detectedPersonIdField, fallbackPersonIdField].filter(Boolean) as string[];
+
+  const addIdentifierMapping = (value: unknown, type: IdentifierType, personId: string) => {
+    const key = buildIdentifierKey(value, type);
+    if (key) {
+      identifierToPersonIdMap.set(key, personId);
+    }
+  };
+
+  const ensureIdentifierMapping = (value: unknown, type: IdentifierType, personId: string) => {
+    const key = buildIdentifierKey(value, type);
+    if (key && !identifierToPersonIdMap.has(key)) {
+      identifierToPersonIdMap.set(key, personId);
+    }
+  };
+
+  const processResolveCall = (call: any) => {
     try {
       console.log('=== RESOLVE_IDENTITIES CALL ===');
 
       let resultContent = call.result.content;
 
-      // Parse if it's a string
       if (typeof resultContent === 'string') {
         resultContent = JSON.parse(resultContent);
       }
 
-      // If it's an array with text field, parse that
       if (Array.isArray(resultContent) && resultContent[0]?.type === 'text') {
         resultContent = JSON.parse(resultContent[0].text);
       }
 
       console.log('Parsed identities count:', resultContent.identities?.length || 0);
 
-      // Extract identifier -> person_id mappings from the identities array
       if (resultContent.identities && Array.isArray(resultContent.identities)) {
         for (const identity of resultContent.identities) {
           const personId = identity.person_id;
 
-          // Get identifiers from the identifiers object
           if (identity.identifiers) {
-            // Handle email identifiers
+            resolvedPersonIds.add(String(personId));
             if (identity.identifiers.email && Array.isArray(identity.identifiers.email)) {
               for (const email of identity.identifiers.email) {
                 console.log(`Mapping email: ${email} -> ${personId}`);
-                identifierToPersonIdMap.set(email.toLowerCase(), String(personId));
+                addIdentifierMapping(email, 'email', String(personId));
               }
             }
 
-            // Handle phone identifiers
             if (identity.identifiers.phone && Array.isArray(identity.identifiers.phone)) {
               for (const phone of identity.identifiers.phone) {
                 console.log(`Mapping phone: ${phone} -> ${personId}`);
-                identifierToPersonIdMap.set(phone.toLowerCase(), String(personId));
+                addIdentifierMapping(phone, 'phone', String(personId));
               }
             }
 
-            // Handle address identifiers
             if (identity.identifiers.address && Array.isArray(identity.identifiers.address)) {
               for (const address of identity.identifiers.address) {
                 console.log(`Mapping address: ${address} -> ${personId}`);
-                identifierToPersonIdMap.set(address.toLowerCase(), String(personId));
+                addIdentifierMapping(address, 'address', String(personId));
               }
             }
           }
@@ -70,43 +243,201 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
     } catch (error) {
       console.error('Error parsing resolve_identities data:', error, error.stack);
     }
+  };
+
+  for (const call of resolveIdentitiesCalls) {
+    processResolveCall(call);
   }
 
-  console.log(`Total identifier mappings: ${identifierToPersonIdMap.size}`);
+  // If dataset already has person_id columns, treat them as resolved ids too
+  if (uploadedData?.rows && personIdFieldCandidates.length > 0) {
+    for (const row of uploadedData.rows) {
+      for (const field of personIdFieldCandidates) {
+        const rawValue = row[field];
+        if (!rawValue) continue;
+        const personId = String(rawValue).trim();
+        if (!personId) continue;
+        existingPersonIds.add(personId);
 
-  // Log all unique person IDs from resolve_identities for debugging
-  const allResolvedPersonIds = Array.from(new Set(Array.from(identifierToPersonIdMap.values())));
-  console.log(`Unique person_ids from resolve_identities: ${allResolvedPersonIds.length}`);
-  console.log(`Sample resolved person_ids:`, allResolvedPersonIds.slice(0, 10));
+        if (emailField && row[emailField]) {
+          ensureIdentifierMapping(row[emailField], 'email', personId);
+        }
+        if (phoneField && row[phoneField]) {
+          ensureIdentifierMapping(row[phoneField], 'phone', personId);
+        }
+        if (addressField && row[addressField]) {
+          ensureIdentifierMapping(row[addressField], 'address', personId);
+        }
+      }
+    }
+  }
+
+  const recomputeResolvedIds = () => Array.from(new Set([
+    ...Array.from(identifierToPersonIdMap.values()),
+    ...Array.from(existingPersonIds.values()),
+    ...Array.from(resolvedPersonIds.values()),
+  ]));
+
+  const logResolvedSummary = (resolvedIds: string[]) => {
+    console.log(`Total identifier mappings: ${identifierToPersonIdMap.size}`);
+    console.log(`Unique person_ids from resolve_identities: ${resolvedIds.length}`);
+    console.log('Sample resolved person_ids:', resolvedIds.slice(0, 10));
+  };
+
+  let allResolvedPersonIds = recomputeResolvedIds();
+
+  const autoResolveIdentifiers = async (
+    identifierType: 'email' | 'phone' | 'address',
+    candidateMap: Map<string, string>
+  ) => {
+    const unresolvedValues = Array.from(candidateMap.entries())
+      .filter(([normalized]) => !identifierToPersonIdMap.has(normalized))
+      .map(([, raw]) => raw)
+      .filter(Boolean);
+
+    if (unresolvedValues.length === 0) {
+      return;
+    }
+
+    const chunkSize = 45;
+    for (let i = 0; i < unresolvedValues.length; i += chunkSize) {
+      const chunk = unresolvedValues.slice(i, i + chunkSize);
+      const resolveInput: any = {
+        id_type: identifierType,
+        id_hash: 'plaintext',
+        identifiers: chunk,
+      };
+
+      try {
+        console.log(`Auto-calling resolve_identities for ${identifierType} identifiers: ${chunk.length}`);
+        const toolResult = await agent.callToolDirect('resolve_identities', resolveInput);
+        const autoCall = {
+          name: 'resolve_identities',
+          input: resolveInput,
+          result: toolResult,
+        };
+        toolCalls.push(autoCall);
+        processResolveCall(autoCall);
+      } catch (error) {
+        console.error(`Failed auto resolve for ${identifierType}`, error);
+      }
+    }
+  };
+
+  await autoResolveIdentifiers('phone', phoneCandidates);
+  await autoResolveIdentifiers('email', emailCandidates);
+  await autoResolveIdentifiers('address', addressCandidates);
+
+  allResolvedPersonIds = recomputeResolvedIds();
+  logResolvedSummary(allResolvedPersonIds);
 
   // Step 2: Extract enriched person data from get_person calls
   const personDataMap = new Map<string, any>();
   const personDataCalls = toolCalls.filter(tc => tc.name === 'get_person' && tc.result);
 
-  for (const call of personDataCalls) {
+  const addExportLink = (value: any) => {
+    if (!value) return;
+    if (typeof value === 'string') {
+      exportLinks.add(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(addExportLink);
+      return;
+    }
+    if (typeof value === 'object') {
+      const maybeStrings = ['download_url', 'url', 'link', 'href'];
+      for (const key of maybeStrings) {
+        if (typeof value[key] === 'string') {
+          exportLinks.add(value[key]);
+        }
+      }
+      if (Array.isArray(value.urls)) {
+        value.urls.forEach(addExportLink);
+      }
+    }
+  };
+
+  const processProfiles = async (profiles?: any[]) => {
+    if (!profiles || !Array.isArray(profiles)) return;
+    console.log(`Found ${profiles.length} profiles in response`);
+    for (const profile of profiles) {
+      if (profile.domains && profile.domains['t0.person_id']) {
+        const personId = String(profile.domains['t0.person_id']);
+        console.log(`Storing person data for ID: ${personId}`);
+        personDataMap.set(personId, profile.domains);
+      } else {
+        console.log('Profile missing person_id:', JSON.stringify(profile).substring(0, 200));
+      }
+    }
+  };
+
+  const fetchExportProfiles = async (exportData: any) => {
+    const urls: string[] = [];
+    const collectUrls = (value: any) => {
+      if (!value) return;
+      if (typeof value === 'string') {
+        urls.push(value);
+        return;
+      }
+      if (Array.isArray(value)) {
+        value.forEach(collectUrls);
+        return;
+      }
+      if (typeof value === 'object') {
+        for (const key of ['download_url', 'url', 'link', 'href']) {
+          if (typeof value[key] === 'string') {
+            urls.push(value[key]);
+          }
+        }
+        if (Array.isArray(value.urls)) {
+          value.urls.forEach(collectUrls);
+        }
+      }
+    };
+
+    collectUrls(exportData);
+    for (const url of urls) {
+      try {
+        console.log('Fetching export data from', url);
+        const response = await fetch(url);
+        if (!response.ok) {
+          console.error('Export fetch failed with status', response.status);
+          continue;
+        }
+        const exportJson = await response.json();
+        const profiles = Array.isArray(exportJson)
+          ? exportJson
+          : Array.isArray(exportJson.profiles)
+            ? exportJson.profiles
+            : [];
+        await processProfiles(profiles);
+      } catch (error) {
+        console.error('Failed to fetch export data', error);
+      }
+    }
+  };
+
+  const processPersonCall = async (call: any) => {
     try {
       console.log('=== GET_PERSON CALL ===');
       console.log('Input:', JSON.stringify(call.input, null, 2));
 
-      // Log requested person_ids for debugging
       const requestedPersonIds = call.input?.person_ids || [];
       console.log(`Requested ${requestedPersonIds.length} person_ids`);
 
       let resultContent = call.result.content;
 
-      // Parse if it's a string
       if (typeof resultContent === 'string') {
         resultContent = JSON.parse(resultContent);
       }
 
-      // If it's an array with text field, parse that
       if (Array.isArray(resultContent) && resultContent[0]?.type === 'text') {
         console.log('Raw text content:', resultContent[0].text.substring(0, 500) + '...');
 
-        // Check if it's an MCP error message
         if (resultContent[0].text.startsWith('MCP error')) {
           console.error('MCP Error returned from get_person:', resultContent[0].text);
-          continue; // Skip this failed call and move to next one
+          return;
         }
 
         resultContent = JSON.parse(resultContent[0].text);
@@ -114,38 +445,66 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
 
       console.log('Parsed result structure:', Object.keys(resultContent).join(', '));
 
-      // MCP get_person returns: { profiles: [ { domains: { ... } } ] }
-      if (resultContent.profiles && Array.isArray(resultContent.profiles)) {
-        console.log(`Found ${resultContent.profiles.length} profiles in response`);
-
-        for (const profile of resultContent.profiles) {
-          if (profile.domains && profile.domains['t0.person_id']) {
-            const personId = String(profile.domains['t0.person_id']);
-            console.log(`Storing person data for ID: ${personId}`);
-
-            // Store the entire domains object which contains all enrichment data
-            personDataMap.set(personId, profile.domains);
-          } else {
-            console.log('Profile missing person_id:', JSON.stringify(profile).substring(0, 200));
-          }
-        }
-      } else {
-        console.log('No profiles array found. Full result:', JSON.stringify(resultContent, null, 2).substring(0, 1000));
+      if (resultContent.export) {
+        addExportLink(resultContent.export);
+        await fetchExportProfiles(resultContent.export);
       }
+
+      await processProfiles(resultContent.profiles);
     } catch (error) {
       console.error('Error parsing person data:', error, error.stack);
     }
+  };
+
+  for (const call of personDataCalls) {
+    await processPersonCall(call);
   }
 
   console.log(`Total person data entries: ${personDataMap.size}`);
 
   // Check for mismatch between resolved and retrieved person_ids
-  const retrievedPersonIds = Array.from(personDataMap.keys());
   const missingPersonIds = allResolvedPersonIds.filter(id => !personDataMap.has(id));
   if (missingPersonIds.length > 0) {
     console.warn(`⚠️  WARNING: ${missingPersonIds.length} person_ids were resolved but NOT retrieved from get_person!`);
     console.warn(`Missing person_ids:`, missingPersonIds.slice(0, 10));
-    console.warn(`This means the chatbot called get_person with different person_ids than what resolve_identities returned.`);
+    console.warn('Automatically fetching missing person_ids via MCP get_person...');
+
+    const chunkSize = 45;
+    const defaultDomains = [
+      'name',
+      'demographic',
+      'email',
+      'phone',
+      'address',
+      'employment',
+      'interest',
+      'lifestyle',
+      'household',
+      'financial',
+    ];
+
+    for (let i = 0; i < missingPersonIds.length; i += chunkSize) {
+      const chunk = missingPersonIds.slice(i, i + chunkSize);
+      const getPersonInput = {
+        person_ids: chunk,
+        domains: defaultDomains,
+        format: 'json',
+      };
+
+      try {
+        console.log(`Auto-calling get_person for ${chunk.length} ids...`);
+        const toolResult = await agent.callToolDirect('get_person', getPersonInput);
+        const autoCall = {
+          name: 'get_person',
+          input: getPersonInput,
+          result: toolResult,
+        };
+        toolCalls.push(autoCall);
+        await processPersonCall(autoCall);
+      } catch (error) {
+        console.error('Failed to auto-fetch person data for chunk', chunk, error);
+      }
+    }
   }
   console.log('Sample identifier mappings:', Array.from(identifierToPersonIdMap.entries()).slice(0, 5));
 
@@ -154,7 +513,9 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
   console.log('Detected fields:', uploadedData.detectedFields);
   console.log('First row sample:', uploadedData.rows[0]);
 
-  for (const row of uploadedData.rows) {
+  const enrichedRowsWithIndex: { row: EnrichedRow; index: number }[] = [];
+
+  uploadedData.rows.forEach((row: any, index: number) => {
     const enrichedRow: EnrichedRow = { ...row };
 
     // Try to find person_id for this row
@@ -177,21 +538,27 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
 
       // Try all fields, not just one
       if (phoneField && row[phoneField]) {
-        const phoneValue = String(row[phoneField]).toLowerCase();
-        personId = identifierToPersonIdMap.get(phoneValue);
-        console.log(`Tried phone "${phoneValue}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        const phoneKey = buildIdentifierKey(row[phoneField], 'phone');
+        if (phoneKey) {
+          personId = identifierToPersonIdMap.get(phoneKey);
+          console.log(`Tried phone "${row[phoneField]}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        }
       }
 
       if (!personId && emailField && row[emailField]) {
-        const emailValue = String(row[emailField]).toLowerCase();
-        personId = identifierToPersonIdMap.get(emailValue);
-        console.log(`Tried email "${emailValue}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        const emailKey = buildIdentifierKey(row[emailField], 'email');
+        if (emailKey) {
+          personId = identifierToPersonIdMap.get(emailKey);
+          console.log(`Tried email "${row[emailField]}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        }
       }
 
       if (!personId && addressField && row[addressField]) {
-        const addressValue = String(row[addressField]).toLowerCase();
-        personId = identifierToPersonIdMap.get(addressValue);
-        console.log(`Tried address "${addressValue}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        const addressKey = buildIdentifierKey(row[addressField], 'address');
+        if (addressKey) {
+          personId = identifierToPersonIdMap.get(addressKey);
+          console.log(`Tried address "${row[addressField]}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        }
       }
     }
 
@@ -211,11 +578,19 @@ function processEnrichedData(toolCalls: any[], uploadedData: any): EnrichedRow[]
       console.log(`No enrichment for row (personId: ${personId})`);
     }
 
-    enrichedRows.push(enrichedRow);
-  }
+    enrichedRowsWithIndex.push({ row: enrichedRow, index });
+  });
 
-  console.log(`Returning ${enrichedRows.length} enriched rows`);
-  return enrichedRows;
+  enrichedRowsWithIndex.sort((a, b) => a.index - b.index);
+  const orderedRows = enrichedRowsWithIndex.map(entry => entry.row);
+
+  console.log(`Returning ${orderedRows.length} enriched rows`);
+  return {
+    rows: orderedRows,
+    exportLinks: Array.from(exportLinks),
+    resolvedCount: allResolvedPersonIds.length,
+    enrichedCount: enrichedRows.length,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -317,23 +692,66 @@ Please help me enrich this data by completing BOTH steps with the EXACT person_i
     }
 
     // Get response from agent
-    const result = await agent.chat(chatMessages);
+    const initialResult = await agent.chat(chatMessages);
+    let finalResponseText = initialResult.response;
+    let toolCalls = initialResult.toolCalls ? [...initialResult.toolCalls] : [];
 
     // Process tool calls to extract enriched data
-    let enrichedData = null;
-    if (result.toolCalls && result.toolCalls.length > 0 && uploadedData) {
-      console.log(`Processing ${result.toolCalls.length} tool calls...`);
-      enrichedData = processEnrichedData(result.toolCalls, uploadedData);
+    let enrichedData: EnrichedRow[] | null = null;
+    let exportLinks: string[] = [];
+    let resolvedCount = 0;
+    let enrichedCount = 0;
+    if (uploadedData) {
+      console.log(`Processing ${toolCalls.length} tool calls...`);
+      const enrichmentResult = await processEnrichedData(agent, toolCalls, uploadedData);
+      enrichedData = enrichmentResult.rows;
+      exportLinks = enrichmentResult.exportLinks;
+      resolvedCount = enrichmentResult.resolvedCount;
+      enrichedCount = enrichmentResult.enrichedCount;
       console.log(`Enriched data rows: ${enrichedData?.length || 0}`);
       if (enrichedData && enrichedData.length > 0) {
         console.log('First enriched row keys:', Object.keys(enrichedData[0]).join(', '));
       }
+
+      if (resolvedCount > 0 || enrichedCount > 0) {
+        console.log('Export links collected this run:', exportLinks);
+
+        const sampleRows = enrichedData.slice(0, 5)
+          .map((row, idx) => {
+            const keys = Object.keys(row).slice(0, 10);
+            const pairs = keys.map(key => `${key}: ${row[key]}`);
+            return `Row ${idx + 1}: ${pairs.join(', ')}`;
+          })
+          .join('\n');
+
+        const summaryContent = `System note: ${resolvedCount} person_ids were resolved and ${enrichedCount} rows were enriched via MCP. Here is a preview of the enriched rows:\n${sampleRows}`;
+
+        chatMessages.push({
+          role: 'user',
+          content: summaryContent,
+        });
+
+        const finalResult = await agent.chat(chatMessages);
+        finalResponseText = finalResult.response;
+        if (finalResult.toolCalls && finalResult.toolCalls.length > 0) {
+          toolCalls = [...toolCalls, ...finalResult.toolCalls];
+        }
+      }
+    }
+
+    let userFacingResponse = finalResponseText;
+    if (resolvedCount > 0 || enrichedCount > 0) {
+      const summaryText = buildUserFacingSummary(resolvedCount, enrichedCount, enrichedData, exportLinks);
+      userFacingResponse = summaryText || finalResponseText;
     }
 
     return NextResponse.json({
-      response: result.response,
-      toolCalls: result.toolCalls,
-      enrichedData: enrichedData,
+      response: userFacingResponse,
+      toolCalls,
+      enrichedData,
+      exportLinks,
+      resolvedCount,
+      enrichedCount,
     });
 
   } catch (error) {

@@ -9,18 +9,24 @@ import { ParsedCSV, EnrichedRow } from '@/lib/csv-processor';
 export default function Home() {
   const [uploadedData, setUploadedData] = useState<ParsedCSV | null>(null);
   const [enrichedData, setEnrichedData] = useState<EnrichedRow[] | null>(null);
+  const [exportLinks, setExportLinks] = useState<string[]>([]);
   const [showDataPreview, setShowDataPreview] = useState(false);
 
   const handleFileUploaded = (data: ParsedCSV) => {
     setUploadedData(data);
     setEnrichedData(null);
+    setExportLinks([]);
     setShowDataPreview(true);
   };
 
-  const handleDataEnriched = (data: EnrichedRow[]) => {
-    console.log('Page: Setting enriched data with', data.length, 'rows');
-    console.log('Page: First row sample:', JSON.stringify(data[0]).substring(0, 200));
-    setEnrichedData(data);
+  const handleDataEnriched = ({ rows, exportLinks = [] }: { rows: EnrichedRow[]; exportLinks?: string[]; resolvedCount?: number; enrichedCount?: number }) => {
+    console.log('Page: Setting enriched data with', rows.length, 'rows');
+    if (rows[0]) {
+      console.log('Page: First row sample:', JSON.stringify(rows[0]).substring(0, 200));
+    }
+    console.log('Page: Previous export links:', exportLinks);
+    setEnrichedData(rows.length > 0 ? rows : null);
+    setExportLinks(exportLinks);
   };
 
   return (
@@ -33,7 +39,7 @@ export default function Home() {
               <h1 className="text-2xl font-bold text-gray-900">Watt Data MCP Assistant</h1>
               <p className="text-sm text-gray-600">AI-powered data enrichment with Watt Data</p>
             </div>
-            <ExportButton data={enrichedData} />
+            <ExportButton data={enrichedData} downloadUrl={exportLinks[0]} />
           </div>
         </div>
       </header>
@@ -43,7 +49,7 @@ export default function Home() {
         <div className="h-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
           {/* Left Sidebar - File Upload & Data Preview */}
-          <div className="lg:col-span-1 flex flex-col gap-4 overflow-y-auto">
+          <div className="lg:col-span-1 flex flex-col gap-4 h-full min-h-0">
             {/* File Upload */}
             <div className="bg-white rounded-lg shadow-lg p-6 flex-shrink-0">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Upload CSV</h2>
@@ -52,7 +58,7 @@ export default function Home() {
 
             {/* Data Preview */}
             {uploadedData && (
-              <div className="bg-white rounded-lg shadow-lg p-6 flex-shrink-0">
+              <div className="bg-white rounded-lg shadow-lg p-6 flex flex-col flex-1 min-h-0">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold text-gray-800">Data Preview</h2>
                   <button
@@ -64,7 +70,7 @@ export default function Home() {
                 </div>
 
                 {showDataPreview && (
-                  <div className="space-y-3">
+                  <div className="space-y-3 flex-1 min-h-0">
                       <div className="bg-blue-50 p-3 rounded">
                         <p className="text-sm font-medium text-blue-800">Total Rows:</p>
                         <p className="text-lg font-bold text-blue-900">{uploadedData.rows.length}</p>
@@ -88,13 +94,13 @@ export default function Home() {
                         </div>
                       </div>
 
-                      <div>
-                        <p className="text-sm font-medium text-gray-700 mb-2">Sample Data:</p>
-                        <div className="bg-gray-50 p-2 rounded text-xs overflow-x-auto">
+                      <div className="flex flex-col min-h-0">
+                        <p className="text-sm font-medium text-gray-700 mb-2">Uploaded Data Preview:</p>
+                        <div className="bg-gray-50 p-2 rounded text-xs overflow-auto max-h-52">
                           <table className="min-w-full">
                             <thead>
                               <tr>
-                                {uploadedData.headers.slice(0, 3).map((header, idx) => (
+                                {uploadedData.headers.map((header, idx) => (
                                   <th key={idx} className="text-left px-2 py-1 text-gray-600 font-medium">
                                     {header}
                                   </th>
@@ -102,12 +108,11 @@ export default function Home() {
                               </tr>
                             </thead>
                             <tbody>
-                              {uploadedData.rows.slice(0, 3).map((row, idx) => (
+                              {uploadedData.rows.map((row, idx) => (
                                 <tr key={idx} className="border-t border-gray-200">
-                                  {uploadedData.headers.slice(0, 3).map((header, hidx) => (
+                                  {uploadedData.headers.map((header, hidx) => (
                                     <td key={hidx} className="px-2 py-1 text-gray-800">
-                                      {row[header]?.substring(0, 20)}
-                                      {row[header]?.length > 20 ? '...' : ''}
+                                      {row[header]}
                                     </td>
                                   ))}
                                 </tr>

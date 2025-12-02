@@ -29,12 +29,17 @@ cp ../.env .env.local
 ```
 
 Required environment variables:
-- `ANTHROPIC_API_KEY` - Your Anthropic API key
+- `AI_PROVIDER` - `claude` (default) or `gemini`
+- `ANTHROPIC_API_KEY` - Your Anthropic API key (required when `AI_PROVIDER=claude`)
 - `CLAUDE_MODEL` - Claude model to use (e.g., claude-sonnet-4-5)
+- `GEMINI_API_KEY` - Your Gemini API key (required when `AI_PROVIDER=gemini`)
+- `GEMINI_MODEL` - Gemini model to use (defaults to gemini-2.0-flash)
 - `MCP_TRANSPORT_TYPE` - Transport type (streamable)
 - `MCP_AUTH_TYPE` - Authentication type (basic)
 - `MCP_SERVER_URL` - Watt Data MCP server URL
 - `MCP_SERVER_API_KEY` - Base64-encoded Watt Data token
+
+You can switch between Claude and Gemini by changing the `AI_PROVIDER` variable without touching the rest of the stack. This is useful if one provider temporarily runs out of quota—you can continue testing with Gemini and switch back to Claude later.
 
 ### 3. Run Development Server
 
