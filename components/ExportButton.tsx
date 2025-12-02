@@ -269,7 +269,7 @@ export default function ExportButton({ data, filename = 'enriched-data.csv', dow
       </svg>
       <span>{buttonLabel}</span>
       {canDownloadRemote && (
-        <span className="text-xs opacity-80">(download)</span>
+        <span className="text-xs opacity-80">({data!.length} rows)</span>
       )}
       {!canDownloadRemote && hasLocalData && (
         <span className="text-xs opacity-80">({data!.length} rows)</span>

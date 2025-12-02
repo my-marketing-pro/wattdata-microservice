@@ -136,22 +136,11 @@ export function flattenProfileData(profile: any): Record<string, string> {
     // If it's a .json field, handle it specially - DO NOT add to flattened output
     if (key.endsWith('.json')) {
       if (typeof value === 'string') {
-        // Parse JSON string - try multiple approaches for malformed JSON
-        try {
-          const parsed = JSON.parse(value);
-          // Merge parsed data into parsedData
+        const parsed = robustJsonParse(value);
+        if (parsed !== null) {
           Object.assign(parsedData, parsed);
-        } catch (e) {
-          // Try to fix common JSON issues: single quotes, missing quotes on keys
-          try {
-            // Replace single quotes with double quotes and try again
-            const fixedValue = value.replace(/'/g, '"');
-            const parsed = JSON.parse(fixedValue);
-            Object.assign(parsedData, parsed);
-          } catch (e2) {
-            // If parsing still fails, skip it (don't include raw JSON strings in output)
-            console.warn(`Failed to parse ${key} even after attempting fixes:`, String(e2).substring(0, 100));
-          }
+        } else {
+          console.warn(`Failed to parse ${key} even after attempting fixes`);
         }
       } else if (typeof value === 'object' && value !== null) {
         // If it's already an object, merge it directly
@@ -221,6 +210,63 @@ export function flattenProfileData(profile: any): Record<string, string> {
 
   return flattened;
 }
+
+function robustJsonParse(value: string): any | null {
+  const attempts = buildJsonVariants(value);
+  for (const attempt of attempts) {
+    try {
+      return JSON.parse(attempt);
+    } catch (error) {
+      continue;
+    }
+  }
+  return null;
+}
+
+function buildJsonVariants(rawValue: string): string[] {
+  const variants = new Set<string>();
+  const queue: string[] = [];
+
+  const enqueue = (str?: string | null) => {
+    if (!str) return;
+    const trimmed = str.trim();
+    if (!trimmed) return;
+    if (!variants.has(trimmed)) {
+      variants.add(trimmed);
+      queue.push(trimmed);
+    }
+  };
+
+  enqueue(rawValue);
+
+  const transformers: Array<(input: string) => string> = [
+    (input) => input.replace(/'/g, '"'),
+    fixUnquotedKeys,
+    stripTrailingCommas,
+    removeControlCharacters,
+  ];
+
+  while (queue.length > 0) {
+    const variant = queue.shift()!;
+    for (const transform of transformers) {
+      enqueue(transform(variant));
+    }
+  }
+
+  return Array.from(variants);
+}
+
+const fixUnquotedKeys = (input: string): string => {
+  return input.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":');
+};
+
+const stripTrailingCommas = (input: string): string => {
+  return input.replace(/,(\s*[}\]])/g, '$1');
+};
+
+const removeControlCharacters = (input: string): string => {
+  return input.replace(/[\u0000-\u001f]/g, '');
+};
 
 /**
  * Extract demographics from profile data
