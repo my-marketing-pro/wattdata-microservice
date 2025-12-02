@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { StoredMessage, getMessages, addMessage, clearCurrentSession } from '@/lib/chat-storage';
+import { EnrichedRow } from '@/lib/csv-processor';
 
 interface ChatInterfaceProps {
   uploadedData?: any;
-  enrichedData?: any;
-  onDataEnriched?: (data: any) => void;
+  enrichedData?: EnrichedRow[] | null;
+  onDataEnriched?: (result: { rows: EnrichedRow[]; exportLinks?: string[]; resolvedCount?: number; enrichedCount?: number }) => void;
 }
 
 export default function ChatInterface({ uploadedData, enrichedData, onDataEnriched }: ChatInterfaceProps) {
@@ -14,6 +15,13 @@ export default function ChatInterface({ uploadedData, enrichedData, onDataEnrich
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const suggestionPrompts = [
+    'Resolve all identifiers and enrich my CSV with full profiles.',
+    'Enrich the first 10 rows with demographics and interests.',
+    'Summarize key insights from the enriched data.',
+    'Find missing person_ids and fill any gaps in the CSV.',
+  ];
 
   // Load messages from localStorage on mount
   useEffect(() => {
@@ -93,7 +101,15 @@ export default function ChatInterface({ uploadedData, enrichedData, onDataEnrich
         console.log('ChatInterface: First row keys count:', Object.keys(data.enrichedData[0] || {}).length);
         console.log('ChatInterface: First row sample keys:', Object.keys(data.enrichedData[0] || {}).slice(0, 20).join(', '));
         console.log('ChatInterface: First row full data:', data.enrichedData[0]);
-        onDataEnriched?.(data.enrichedData);
+        onDataEnriched?.({
+          rows: data.enrichedData,
+          exportLinks: data.exportLinks || [],
+          resolvedCount: data.resolvedCount,
+          enrichedCount: data.enrichedCount,
+        });
+      } else if (data.exportLinks && data.exportLinks.length > 0) {
+        console.log('ChatInterface: Received export links without row data');
+        onDataEnriched?.({ rows: [], exportLinks: data.exportLinks, resolvedCount: data.resolvedCount, enrichedCount: data.enrichedCount });
       } else {
         console.log('ChatInterface: No enriched data in response');
       }
@@ -232,7 +248,20 @@ export default function ChatInterface({ uploadedData, enrichedData, onDataEnrich
       </div>
 
       {/* Input */}
-      <div className="flex-shrink-0 border-t p-4">
+      <div className="flex-shrink-0 border-t p-4 space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {suggestionPrompts.map(prompt => (
+            <button
+              key={prompt}
+              type="button"
+              onClick={() => setInput(prompt)}
+              className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200"
+              disabled={isLoading}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
         <div className="flex space-x-2">
           <textarea
             value={input}

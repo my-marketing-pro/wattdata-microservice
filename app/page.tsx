@@ -9,18 +9,24 @@ import { ParsedCSV, EnrichedRow } from '@/lib/csv-processor';
 export default function Home() {
   const [uploadedData, setUploadedData] = useState<ParsedCSV | null>(null);
   const [enrichedData, setEnrichedData] = useState<EnrichedRow[] | null>(null);
+  const [exportLinks, setExportLinks] = useState<string[]>([]);
   const [showDataPreview, setShowDataPreview] = useState(false);
 
   const handleFileUploaded = (data: ParsedCSV) => {
     setUploadedData(data);
     setEnrichedData(null);
+    setExportLinks([]);
     setShowDataPreview(true);
   };
 
-  const handleDataEnriched = (data: EnrichedRow[]) => {
-    console.log('Page: Setting enriched data with', data.length, 'rows');
-    console.log('Page: First row sample:', JSON.stringify(data[0]).substring(0, 200));
-    setEnrichedData(data);
+  const handleDataEnriched = ({ rows, exportLinks = [] }: { rows: EnrichedRow[]; exportLinks?: string[]; resolvedCount?: number; enrichedCount?: number }) => {
+    console.log('Page: Setting enriched data with', rows.length, 'rows');
+    if (rows[0]) {
+      console.log('Page: First row sample:', JSON.stringify(rows[0]).substring(0, 200));
+    }
+    console.log('Page: Previous export links:', exportLinks);
+    setEnrichedData(rows.length > 0 ? rows : null);
+    setExportLinks(exportLinks);
   };
 
   return (
@@ -33,7 +39,7 @@ export default function Home() {
               <h1 className="text-2xl font-bold text-gray-900">Watt Data MCP Assistant</h1>
               <p className="text-sm text-gray-600">AI-powered data enrichment with Watt Data</p>
             </div>
-            <ExportButton data={enrichedData} />
+            <ExportButton data={enrichedData} downloadUrl={exportLinks[0]} />
           </div>
         </div>
       </header>
@@ -89,12 +95,12 @@ export default function Home() {
                       </div>
 
                       <div>
-                        <p className="text-sm font-medium text-gray-700 mb-2">Sample Data:</p>
-                        <div className="bg-gray-50 p-2 rounded text-xs overflow-x-auto">
+                        <p className="text-sm font-medium text-gray-700 mb-2">Uploaded Data Preview:</p>
+                        <div className="bg-gray-50 p-2 rounded text-xs overflow-auto max-h-64">
                           <table className="min-w-full">
                             <thead>
                               <tr>
-                                {uploadedData.headers.slice(0, 3).map((header, idx) => (
+                                {uploadedData.headers.map((header, idx) => (
                                   <th key={idx} className="text-left px-2 py-1 text-gray-600 font-medium">
                                     {header}
                                   </th>
@@ -102,12 +108,11 @@ export default function Home() {
                               </tr>
                             </thead>
                             <tbody>
-                              {uploadedData.rows.slice(0, 3).map((row, idx) => (
+                              {uploadedData.rows.map((row, idx) => (
                                 <tr key={idx} className="border-t border-gray-200">
-                                  {uploadedData.headers.slice(0, 3).map((header, hidx) => (
+                                  {uploadedData.headers.map((header, hidx) => (
                                     <td key={hidx} className="px-2 py-1 text-gray-800">
-                                      {row[header]?.substring(0, 20)}
-                                      {row[header]?.length > 20 ? '...' : ''}
+                                      {row[header]}
                                     </td>
                                   ))}
                                 </tr>
