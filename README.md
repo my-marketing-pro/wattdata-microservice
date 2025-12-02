@@ -8,7 +8,8 @@ A Next.js web application for interacting with the Watt Data MCP server through 
 - **CSV Upload**: Drag-and-drop or file picker for CSV files
 - **Auto-Detection**: Automatically detects email, phone, address, and person_id columns
 - **Data Enrichment**: Enrich uploaded data with demographics, interests, and profile data
-- **CSV Export**: Download enriched data as CSV
+- **CSV Export**: Remote MCP exports are re-ordered to match the input rows and merged with the original columns before download
+- **Secure Proxy Download**: Server-side `/api/proxy-download` route hides signed MCP URLs from the browser while streaming large exports
 - **Chat History**: Persistent chat history in browser localStorage
 - **Real-time Preview**: View uploaded data and enrichment status
 
@@ -64,7 +65,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
    - "Find people in California"
    - "Get profiles for the first 10 rows"
 
-3. **Export Results**: Click "Export CSV" to download enriched data
+3. **Export Results**: Click "Export CSV" to download enriched data. The app fetches the MCP export through the proxy API, flattens malformed JSON structures, merges in the original columns, and preserves row order.
 
 ### Example Queries
 
@@ -83,10 +84,11 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ```
 watt-data-web/
 ├── app/
-│   ├── page.tsx              # Main UI
+│   ├── page.tsx              # Main UI + layout
 │   └── api/
-│       ├── chat/route.ts     # Chat endpoint
-│       └── process-csv/      # CSV processing endpoint
+│       ├── chat/route.ts     # Chat endpoint (tool orchestration + summaries)
+│       ├── process-csv/      # Legacy CSV processing endpoint
+│       └── proxy-download/   # Server-side proxy for MCP export files
 ├── components/
 │   ├── ChatInterface.tsx     # Chat UI component
 │   ├── FileUpload.tsx        # File upload with drag-drop
@@ -148,11 +150,11 @@ watt-data-web/
 - Interests/clusters extraction
 - Flattened JSON to CSV conversion
 
-### Export
-- One-click CSV export
-- Includes original + enriched data
-- Proper CSV formatting
-- Custom filename support
+### Export & Proxy Download
+- One-click CSV export that always matches the input order
+- Remote JSON/CSV exports are flattened (with malformed JSON repair heuristics)
+- Original CSV columns stay at the front of each row
+- `/api/proxy-download` fetches signed URLs server-side so tokens never reach the browser
 
 ## Troubleshooting
 
@@ -194,6 +196,12 @@ npm start
 ```bash
 npx tsc --noEmit
 ```
+
+## Deployment Notes
+
+- Deploying to **Vercel** works out of the box; the API routes (chat, proxy-download, etc.) ship with the app. Make sure outbound HTTPS traffic is allowed so `/api/proxy-download` can fetch Watt Data exports.
+- The build currently enforces TypeScript checks (`npx tsc --noEmit`). If Vercel reports a TS error, run the same command locally to reproduce.
+- No extra infrastructure is required for the proxy—just use `/api/proxy-download?url=...` in the client, even in production.
 
 ## Technologies
 
