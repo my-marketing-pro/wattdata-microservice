@@ -10,6 +10,39 @@ interface EnrichmentResult {
   enrichedCount: number;
 }
 
+type IdentifierType = 'email' | 'phone' | 'address';
+
+const normalizeIdentifier = (value: string, type: IdentifierType): string => {
+  if (!value) return '';
+  let trimmed = value.trim();
+
+  if (type === 'phone') {
+    let digits = trimmed.replace(/[^0-9]/g, '');
+    if (digits.length === 11 && digits.startsWith('1')) {
+      digits = digits.slice(1);
+    }
+    return digits;
+  }
+
+  trimmed = trimmed.toLowerCase();
+
+  if (type === 'address') {
+    trimmed = trimmed.replace(/\s+/g, ' ');
+  }
+
+  return trimmed;
+};
+
+const buildIdentifierKey = (value: unknown, type: IdentifierType): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const stringValue = typeof value === 'string' ? value : String(value);
+  const normalized = normalizeIdentifier(stringValue, type);
+  if (!normalized) return null;
+  return `${type}:${normalized}`;
+};
+
 /**
  * Process tool call results to extract enriched person data
  */
@@ -32,21 +65,24 @@ async function processEnrichedData(
   if (uploadedData?.rows) {
     for (const row of uploadedData.rows) {
       if (emailField && row[emailField]) {
-        const value = String(row[emailField]).trim();
-        if (value) {
-          emailCandidates.set(value.toLowerCase(), value);
+        const rawValue = String(row[emailField]).trim();
+        const key = buildIdentifierKey(rawValue, 'email');
+        if (key && rawValue) {
+          emailCandidates.set(key, rawValue);
         }
       }
       if (phoneField && row[phoneField]) {
-        const value = String(row[phoneField]).trim();
-        if (value) {
-          phoneCandidates.set(value.toLowerCase(), value);
+        const rawValue = String(row[phoneField]).trim();
+        const key = buildIdentifierKey(rawValue, 'phone');
+        if (key && rawValue) {
+          phoneCandidates.set(key, rawValue);
         }
       }
       if (addressField && row[addressField]) {
-        const value = String(row[addressField]).trim();
-        if (value) {
-          addressCandidates.set(value.toLowerCase(), value);
+        const rawValue = String(row[addressField]).trim();
+        const key = buildIdentifierKey(rawValue, 'address');
+        if (key && rawValue) {
+          addressCandidates.set(key, rawValue);
         }
       }
     }
@@ -80,6 +116,20 @@ async function processEnrichedData(
   const fallbackPersonIdField = getHeaderMatch('person_id', 'personid', 't0.person_id', 't0.personid');
   const personIdFieldCandidates = [detectedPersonIdField, fallbackPersonIdField].filter(Boolean) as string[];
 
+  const addIdentifierMapping = (value: unknown, type: IdentifierType, personId: string) => {
+    const key = buildIdentifierKey(value, type);
+    if (key) {
+      identifierToPersonIdMap.set(key, personId);
+    }
+  };
+
+  const ensureIdentifierMapping = (value: unknown, type: IdentifierType, personId: string) => {
+    const key = buildIdentifierKey(value, type);
+    if (key && !identifierToPersonIdMap.has(key)) {
+      identifierToPersonIdMap.set(key, personId);
+    }
+  };
+
   const processResolveCall = (call: any) => {
     try {
       console.log('=== RESOLVE_IDENTITIES CALL ===');
@@ -105,21 +155,21 @@ async function processEnrichedData(
             if (identity.identifiers.email && Array.isArray(identity.identifiers.email)) {
               for (const email of identity.identifiers.email) {
                 console.log(`Mapping email: ${email} -> ${personId}`);
-                identifierToPersonIdMap.set(email.toLowerCase(), String(personId));
+                addIdentifierMapping(email, 'email', String(personId));
               }
             }
 
             if (identity.identifiers.phone && Array.isArray(identity.identifiers.phone)) {
               for (const phone of identity.identifiers.phone) {
                 console.log(`Mapping phone: ${phone} -> ${personId}`);
-                identifierToPersonIdMap.set(phone.toLowerCase(), String(personId));
+                addIdentifierMapping(phone, 'phone', String(personId));
               }
             }
 
             if (identity.identifiers.address && Array.isArray(identity.identifiers.address)) {
               for (const address of identity.identifiers.address) {
                 console.log(`Mapping address: ${address} -> ${personId}`);
-                identifierToPersonIdMap.set(address.toLowerCase(), String(personId));
+                addIdentifierMapping(address, 'address', String(personId));
               }
             }
           }
@@ -145,22 +195,13 @@ async function processEnrichedData(
         existingPersonIds.add(personId);
 
         if (emailField && row[emailField]) {
-          const key = String(row[emailField]).toLowerCase();
-          if (key && !identifierToPersonIdMap.has(key)) {
-            identifierToPersonIdMap.set(key, personId);
-          }
+          ensureIdentifierMapping(row[emailField], 'email', personId);
         }
         if (phoneField && row[phoneField]) {
-          const key = String(row[phoneField]).toLowerCase();
-          if (key && !identifierToPersonIdMap.has(key)) {
-            identifierToPersonIdMap.set(key, personId);
-          }
+          ensureIdentifierMapping(row[phoneField], 'phone', personId);
         }
         if (addressField && row[addressField]) {
-          const key = String(row[addressField]).toLowerCase();
-          if (key && !identifierToPersonIdMap.has(key)) {
-            identifierToPersonIdMap.set(key, personId);
-          }
+          ensureIdentifierMapping(row[addressField], 'address', personId);
         }
       }
     }
@@ -432,21 +473,27 @@ async function processEnrichedData(
 
       // Try all fields, not just one
       if (phoneField && row[phoneField]) {
-        const phoneValue = String(row[phoneField]).toLowerCase();
-        personId = identifierToPersonIdMap.get(phoneValue);
-        console.log(`Tried phone "${phoneValue}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        const phoneKey = buildIdentifierKey(row[phoneField], 'phone');
+        if (phoneKey) {
+          personId = identifierToPersonIdMap.get(phoneKey);
+          console.log(`Tried phone "${row[phoneField]}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        }
       }
 
       if (!personId && emailField && row[emailField]) {
-        const emailValue = String(row[emailField]).toLowerCase();
-        personId = identifierToPersonIdMap.get(emailValue);
-        console.log(`Tried email "${emailValue}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        const emailKey = buildIdentifierKey(row[emailField], 'email');
+        if (emailKey) {
+          personId = identifierToPersonIdMap.get(emailKey);
+          console.log(`Tried email "${row[emailField]}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        }
       }
 
       if (!personId && addressField && row[addressField]) {
-        const addressValue = String(row[addressField]).toLowerCase();
-        personId = identifierToPersonIdMap.get(addressValue);
-        console.log(`Tried address "${addressValue}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        const addressKey = buildIdentifierKey(row[addressField], 'address');
+        if (addressKey) {
+          personId = identifierToPersonIdMap.get(addressKey);
+          console.log(`Tried address "${row[addressField]}": ${personId ? 'FOUND ' + personId : 'not found'}`);
+        }
       }
     }
 
