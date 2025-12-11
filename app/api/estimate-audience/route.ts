@@ -47,10 +47,11 @@ export async function POST(request: NextRequest) {
           console.error('[estimate-audience] MCP Error:', content);
           return NextResponse.json({ estimate: null });
         }
+        const rawContent = content;
         try {
           content = JSON.parse(content);
         } catch {
-          console.error('[estimate-audience] Failed to parse string content:', content.substring(0, 200));
+          console.error('[estimate-audience] Failed to parse string content:', rawContent.substring(0, 200));
           return NextResponse.json({ estimate: null });
         }
       }
