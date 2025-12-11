@@ -275,23 +275,23 @@ export default function ICPCharacteristicSelector({
   const activeProfile = savedProfiles.find(p => p.id === activeProfileId);
 
   return (
-    <div className="flex flex-col h-full gap-3">
+    <div className="flex flex-col h-full gap-2 sm:gap-3">
       {/* Audience Estimate Card - prominent at top */}
-      <div className="flex-shrink-0 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-xl p-3 text-white shadow-lg">
+      <div className="flex-shrink-0 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-white shadow-lg">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-purple-200 text-xs font-medium uppercase tracking-wide">Est. Audience</p>
             {isEstimating ? (
-              <p className="text-xl font-bold animate-pulse">...</p>
+              <p className="text-lg sm:text-xl font-bold animate-pulse">...</p>
             ) : audienceEstimate !== null ? (
-              <p className="text-2xl font-bold">{audienceEstimate.toLocaleString()}</p>
+              <p className="text-xl sm:text-2xl font-bold">{audienceEstimate.toLocaleString()}</p>
             ) : (
-              <p className="text-xl font-bold text-purple-300">{selectedCount > 0 ? '—' : '0'}</p>
+              <p className="text-lg sm:text-xl font-bold text-purple-300">{selectedCount > 0 ? '—' : '0'}</p>
             )}
           </div>
           <div className="text-right">
             <p className="text-purple-200 text-xs">Selected</p>
-            <p className="text-lg font-semibold">{selectedCount}</p>
+            <p className="text-base sm:text-lg font-semibold">{selectedCount}</p>
           </div>
         </div>
       </div>
@@ -413,20 +413,20 @@ export default function ICPCharacteristicSelector({
       )}
 
       {/* Characteristics Controls Card */}
-      <div className="flex-shrink-0 bg-white/60 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
+      <div className="flex-shrink-0 bg-white/60 backdrop-blur-sm rounded-lg sm:rounded-xl border border-gray-200 overflow-hidden">
         {/* Header */}
-        <div className="px-3 py-2 bg-gray-50/80 border-b border-gray-200">
+        <div className="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-gray-50/80 border-b border-gray-200">
           <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Characteristics</span>
         </div>
 
-        <div className="p-3 space-y-3">
+        <div className="p-2 sm:p-3 space-y-2 sm:space-y-3">
           {/* View Toggle */}
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-500 font-medium">View</span>
-            <div className="flex bg-gray-100 rounded-lg p-0.5">
+            <div className="flex bg-gray-100 rounded-md sm:rounded-lg p-0.5">
               <button
                 onClick={() => setShowNegative(false)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                className={`px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium rounded-md transition-all ${
                   !showNegative
                     ? 'bg-white text-gray-800 shadow-sm'
                     : 'text-gray-500 hover:text-gray-700'
@@ -436,7 +436,7 @@ export default function ICPCharacteristicSelector({
               </button>
               <button
                 onClick={() => setShowNegative(true)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                className={`px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium rounded-md transition-all ${
                   showNegative
                     ? 'bg-white text-gray-800 shadow-sm'
                     : 'text-gray-500 hover:text-gray-700'
@@ -447,41 +447,41 @@ export default function ICPCharacteristicSelector({
             </div>
           </div>
 
-          {/* Selection Controls */}
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-500 font-medium">Selection</span>
-            <div className="flex gap-1.5">
-              <button
-                onClick={handleSelectAllVisible}
-                className="px-3 py-1.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
-              >
-                Select All
-              </button>
-              <button
-                onClick={handleSelectNone}
-                className="px-3 py-1.5 text-xs font-medium bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Clear
-              </button>
+          {/* Selection & Operator Controls - stacked on mobile */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <div className="flex items-center justify-between sm:flex-1">
+              <span className="text-xs text-gray-500 font-medium sm:hidden">Selection</span>
+              <div className="flex gap-1">
+                <button
+                  onClick={handleSelectAllVisible}
+                  className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-md sm:rounded-lg hover:bg-purple-200 transition-colors"
+                >
+                  Select All
+                </button>
+                <button
+                  onClick={handleSelectNone}
+                  className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium bg-gray-100 text-gray-600 rounded-md sm:rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
-          </div>
-
-          {/* Operator Controls */}
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-500 font-medium">Operators</span>
-            <div className="flex gap-1.5">
-              <button
-                onClick={() => handleSetAllOperators('AND')}
-                className="px-3 py-1.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
-              >
-                All AND
-              </button>
-              <button
-                onClick={() => handleSetAllOperators('OR')}
-                className="px-3 py-1.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors"
-              >
-                All OR
-              </button>
+            <div className="flex items-center justify-between sm:flex-1">
+              <span className="text-xs text-gray-500 font-medium sm:hidden">Operators</span>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => handleSetAllOperators('AND')}
+                  className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-md sm:rounded-lg hover:bg-blue-200 transition-colors"
+                >
+                  All AND
+                </button>
+                <button
+                  onClick={() => handleSetAllOperators('OR')}
+                  className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-md sm:rounded-lg hover:bg-orange-200 transition-colors"
+                >
+                  All OR
+                </button>
+              </div>
             </div>
           </div>
         </div>
