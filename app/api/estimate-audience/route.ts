@@ -35,30 +35,30 @@ export async function POST(request: NextRequest) {
     console.log('[estimate-audience] Raw list_clusters result:', JSON.stringify(listClustersResult, null, 2));
 
     // Parse the clusters response - handle MCP errors (matching chat route logic)
-    let clusters: any[] = [];
+    let clusters: Array<{ name: string; value: string; cluster_id: string | number }> = [];
     if (listClustersResult?.content) {
-      let content = listClustersResult.content;
-      console.log('[estimate-audience] Content type:', typeof content, Array.isArray(content) ? 'array' : '');
+      const rawContent = listClustersResult.content;
+      console.log('[estimate-audience] Content type:', typeof rawContent, Array.isArray(rawContent) ? 'array' : '');
+
+      let parsedContent: { clusters?: Array<{ name: string; value: string; cluster_id: string | number }> } | null = null;
 
       // Handle string content
-      if (typeof content === 'string') {
+      if (typeof rawContent === 'string') {
         // Check for MCP error
-        if (content.startsWith('MCP error')) {
-          console.error('[estimate-audience] MCP Error:', content);
+        if (rawContent.startsWith('MCP error')) {
+          console.error('[estimate-audience] MCP Error:', rawContent);
           return NextResponse.json({ estimate: null });
         }
-        const rawContent = content;
         try {
-          content = JSON.parse(content);
+          parsedContent = JSON.parse(rawContent);
         } catch {
           console.error('[estimate-audience] Failed to parse string content:', rawContent.substring(0, 200));
           return NextResponse.json({ estimate: null });
         }
       }
-
       // Handle array content with text type
-      if (Array.isArray(content) && content[0]?.type === 'text') {
-        const textContent = content[0].text;
+      else if (Array.isArray(rawContent) && rawContent[0]?.type === 'text') {
+        const textContent = rawContent[0].text;
         console.log('[estimate-audience] Text content preview:', textContent.substring(0, 200));
         // Check for MCP error in text content
         if (textContent.startsWith('MCP error')) {
@@ -66,14 +66,14 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ estimate: null });
         }
         try {
-          content = JSON.parse(textContent);
+          parsedContent = JSON.parse(textContent);
         } catch {
           console.error('[estimate-audience] Failed to parse text content:', textContent.substring(0, 200));
           return NextResponse.json({ estimate: null });
         }
       }
 
-      clusters = content?.clusters || [];
+      clusters = parsedContent?.clusters || [];
       console.log('[estimate-audience] Parsed clusters count:', clusters.length);
     } else {
       console.log('[estimate-audience] No content in listClustersResult');
