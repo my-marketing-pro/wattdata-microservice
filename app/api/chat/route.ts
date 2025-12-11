@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAgent, MCPAgent, ChatMessage } from '@/lib/mcp-agent';
-import { EnrichedRow, flattenProfileData } from '@/lib/csv-processor';
+import { EnrichedRow, flattenProfileData, analyzeICPFromProfiles, ICPAttribute, ICPAnalysisResult, buildClusterExpression } from '@/lib/csv-processor';
 import { Readable } from 'stream';
+
+type WorkflowMode = 'enrich' | 'find-similar';
 
 interface EnrichmentResult {
   rows: EnrichedRow[];
@@ -44,6 +46,58 @@ const formatPreviewRows = (rows: EnrichedRow[]): string => {
   }
 
   return `Sample rows:\n${lines.join('\n')}`;
+};
+
+/**
+ * Formats an attribute name and value into a human-friendly label for chat responses.
+ */
+const formatAttributeLabel = (name: string, value: string): string => {
+  const isFalse = value.toLowerCase() === 'false';
+  const isTrue = value.toLowerCase() === 'true';
+  const isBoolean = isFalse || isTrue;
+
+  const parts = name.toLowerCase().split('_');
+
+  // Remove category prefix
+  const categories = ['financial', 'lifestyle', 'interest', 'demographic', 'household', 'purchase', 'donation', 'political', 'technology', 'vehicle', 'property', 'health', 'travel', 'retail'];
+  let remainingParts = categories.includes(parts[0]) ? parts.slice(1) : [...parts];
+
+  // Remove common suffixes
+  const suffixes = ['value', 'flag', 'indicator', 'code'];
+  while (remainingParts.length > 0 && suffixes.includes(remainingParts[remainingParts.length - 1])) {
+    remainingParts.pop();
+  }
+
+  const formatWords = (words: string[]) => words
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ')
+    .replace(/\bAnd\b/g, '&');
+
+  // Pattern matching for natural language
+  if (remainingParts[0] === 'is') {
+    const thing = formatWords(remainingParts.slice(1));
+    return isBoolean ? (isFalse ? `Not a ${thing.toLowerCase()}` : `Is a ${thing.toLowerCase()}`) : `${thing}: ${value}`;
+  }
+  if (remainingParts[0] === 'has') {
+    const thing = formatWords(remainingParts.slice(1));
+    return isBoolean ? (isFalse ? `No ${thing.toLowerCase()}` : `Has ${thing.toLowerCase()}`) : `${thing}: ${value}`;
+  }
+  if (remainingParts[0] === 'owns') {
+    const thing = formatWords(remainingParts.slice(1));
+    return isBoolean ? (isFalse ? `Doesn't own ${thing.toLowerCase()}` : `Owns ${thing.toLowerCase()}`) : `${thing}: ${value}`;
+  }
+  if (remainingParts[0] === 'donated') {
+    const cause = formatWords(remainingParts.slice(1));
+    return isBoolean ? (isFalse ? `Doesn't donate to ${cause.toLowerCase()}` : `Donates to ${cause.toLowerCase()}`) : `${cause}: ${value}`;
+  }
+  if (remainingParts[0] === 'interested') {
+    const interest = formatWords(remainingParts.slice(1));
+    return isBoolean ? (isFalse ? `Not interested in ${interest.toLowerCase()}` : `Interested in ${interest.toLowerCase()}`) : `${interest}: ${value}`;
+  }
+
+  // Default formatting
+  const formatted = formatWords(remainingParts);
+  return isBoolean ? (isFalse ? `No ${formatted.toLowerCase()}` : formatted) : `${formatted}: ${value}`;
 };
 
 const buildUserFacingSummary = (
@@ -93,6 +147,10 @@ const normalizeIdentifier = (value: string, type: IdentifierType): string => {
     let digits = trimmed.replace(/[^0-9]/g, '');
     if (digits.length === 11 && digits.startsWith('1')) {
       digits = digits.slice(1);
+    }
+    // For 10-digit US numbers, add +1 prefix for WattData API
+    if (digits.length === 10) {
+      return `+1${digits}`;
     }
     return digits;
   }
@@ -147,8 +205,10 @@ async function processEnrichedData(
       if (phoneField && row[phoneField]) {
         const rawValue = String(row[phoneField]).trim();
         const key = buildIdentifierKey(rawValue, 'phone');
-        if (key && rawValue) {
-          phoneCandidates.set(key, rawValue);
+        // Normalize phone for API: use the normalized format (with +1 prefix)
+        const normalizedPhone = normalizeIdentifier(rawValue, 'phone');
+        if (key && normalizedPhone) {
+          phoneCandidates.set(key, normalizedPhone);
         }
       }
       if (addressField && row[addressField]) {
@@ -370,10 +430,27 @@ async function processEnrichedData(
     if (!profiles || !Array.isArray(profiles)) return;
     console.log(`Found ${profiles.length} profiles in response`);
     for (const profile of profiles) {
-      if (profile.domains && profile.domains['t0.person_id']) {
-        const personId = String(profile.domains['t0.person_id']);
+      // Try to get person_id from multiple locations
+      let personId: string | null = null;
+
+      // Check root level person_id first (new API format)
+      if (profile.person_id) {
+        personId = String(profile.person_id);
+      }
+      // Check domains['t0.person_id'] (old format)
+      else if (profile.domains && profile.domains['t0.person_id']) {
+        personId = String(profile.domains['t0.person_id']);
+      }
+      // Check domains.person_id
+      else if (profile.domains && profile.domains.person_id) {
+        personId = String(profile.domains.person_id);
+      }
+
+      if (personId) {
         console.log(`Storing person data for ID: ${personId}`);
-        personDataMap.set(personId, profile.domains);
+        // Store either the domains object or the whole profile if domains doesn't exist
+        const dataToStore = profile.domains || profile;
+        personDataMap.set(personId, dataToStore);
       } else {
         console.log('Profile missing person_id:', JSON.stringify(profile).substring(0, 200));
       }
@@ -592,19 +669,324 @@ async function processEnrichedData(
   enrichedRowsWithIndex.sort((a, b) => a.index - b.index);
   const orderedRows = enrichedRowsWithIndex.map(entry => entry.row);
 
+  // Count how many rows actually got enrichment data
+  const actualEnrichedCount = orderedRows.filter(row => Object.keys(row).length > 3).length;
+
   console.log(`Returning ${orderedRows.length} enriched rows`);
+  console.log(`Resolved person_ids: ${allResolvedPersonIds.length}`);
+  console.log(`Actually enriched rows (>3 keys): ${actualEnrichedCount}`);
+  console.log(`PersonDataMap size: ${personDataMap.size}`);
+
+  // Find a row that was enriched and log its keys
+  const enrichedRow = orderedRows.find(row => Object.keys(row).length > 3);
+  if (enrichedRow) {
+    console.log(`Sample enriched row keys (first 10): ${Object.keys(enrichedRow).slice(0, 10).join(', ')}`);
+  }
+
   return {
     rows: orderedRows,
     exportLinks: Array.from(exportLinks),
     resolvedCount: allResolvedPersonIds.length,
-    enrichedCount: enrichedRows.length,
+    enrichedCount: actualEnrichedCount, // Fixed: use actual count instead of empty array
+  };
+}
+
+/**
+ * Process ICP analysis for Find Similar workflow
+ * Step 1: Enrich all profiles with all domains
+ * Step 2: Analyze the enriched data to find common characteristics
+ */
+async function processICPAnalysis(
+  agent: MCPAgent,
+  toolCalls: any[],
+  uploadedData: any
+): Promise<{ enrichedRows: EnrichedRow[]; icpAnalysis: ICPAnalysisResult }> {
+  console.log(`[processICPAnalysis] Starting with ${toolCalls.length} tool calls`);
+  console.log(`[processICPAnalysis] Uploaded data has ${uploadedData?.rows?.length || 0} rows`);
+
+  // Enrich all rows with all available domains
+  const enrichmentResult = await processEnrichedData(agent, toolCalls, uploadedData);
+
+  console.log(`[processICPAnalysis] Enrichment returned ${enrichmentResult.rows.length} rows`);
+  if (enrichmentResult.rows[0]) {
+    const keys = Object.keys(enrichmentResult.rows[0]);
+    console.log(`[processICPAnalysis] First enriched row has ${keys.length} fields:`);
+    console.log(`[processICPAnalysis] Sample keys: ${keys.slice(0, 15).join(', ')}`);
+  }
+
+  // Analyze ICP from enriched data
+  const icpAnalysis = analyzeICPFromProfiles(enrichmentResult.rows);
+
+  console.log(`[processICPAnalysis] ICP Analysis found ${icpAnalysis.topAttributes.length} attributes from ${icpAnalysis.totalProfiles} profiles`);
+
+  return {
+    enrichedRows: enrichmentResult.rows,
+    icpAnalysis,
+  };
+}
+
+interface FindSimilarResult {
+  similarContacts: any[];
+  exportLinks: string[];
+  total: number;
+  expression: string;
+}
+
+/**
+ * Process Find Similar Contacts search
+ * Uses selected ICP attributes to find lookalike audience via WattData
+ */
+async function processFindSimilarContacts(
+  agent: MCPAgent,
+  selectedAttributes: ICPAttribute[]
+): Promise<FindSimilarResult> {
+  console.log(`Finding similar contacts with ${selectedAttributes.length} selected attributes`);
+
+  // Step 1: Get cluster IDs for selected attributes
+  // Use clusterName (normalized) for WattData API lookup
+  const uniqueClusterNames = [...new Set(selectedAttributes.map(a => a.clusterName))];
+  console.log('Looking up clusters for cluster names:', uniqueClusterNames);
+  console.log('Original attribute names:', selectedAttributes.map(a => a.attributeName));
+
+  let clustersResult: any;
+  try {
+    clustersResult = await agent.callToolDirect('list_clusters', {
+      cluster_names: uniqueClusterNames,
+    });
+    console.log('list_clusters result:', JSON.stringify(clustersResult).substring(0, 500));
+  } catch (error) {
+    logError('Error calling list_clusters', error);
+    throw new Error('Failed to look up cluster IDs for the selected attributes');
+  }
+
+  // Parse the clusters response - handle MCP errors
+  let clusters: any[] = [];
+  if (clustersResult?.content) {
+    let content = clustersResult.content;
+    if (typeof content === 'string') {
+      // Check for MCP error
+      if (content.startsWith('MCP error')) {
+        console.error('MCP Error from list_clusters:', content);
+        throw new Error(`WattData API error: The selected attributes may not be supported for cluster lookup. Try selecting different characteristics.`);
+      }
+      try {
+        content = JSON.parse(content);
+      } catch {
+        // Not JSON, might be error message
+        console.error('Unexpected list_clusters response:', content);
+        throw new Error('Unexpected response from cluster lookup');
+      }
+    }
+    if (Array.isArray(content) && content[0]?.type === 'text') {
+      const textContent = content[0].text;
+      // Check for MCP error in text content
+      if (textContent.startsWith('MCP error')) {
+        console.error('MCP Error from list_clusters:', textContent);
+        throw new Error(`WattData API error: The selected attributes may not be supported for cluster lookup. Try selecting different characteristics.`);
+      }
+      try {
+        content = JSON.parse(textContent);
+      } catch {
+        console.error('Failed to parse list_clusters text:', textContent);
+        throw new Error('Failed to parse cluster lookup response');
+      }
+    }
+    clusters = content?.clusters || [];
+  }
+
+  console.log(`Found ${clusters.length} clusters`);
+
+  // Step 2: Map attributes to cluster IDs
+  // Note: API returns 'name' and 'value', not 'cluster_name' and 'cluster_value'
+  const clusterMap = new Map<string, string>();
+  for (const cluster of clusters) {
+    // Handle both field naming conventions from API
+    const clusterName = cluster.name || cluster.cluster_name;
+    const clusterValue = cluster.value || cluster.cluster_value;
+    const clusterId = String(cluster.cluster_id);
+    const key = `${clusterName}=${clusterValue}`;
+    clusterMap.set(key, clusterId);
+    console.log(`Mapped ${key} -> ${clusterId}`);
+  }
+
+  // Step 3: Build boolean expression from selected attributes
+  const expression = buildClusterExpression(selectedAttributes, clusterMap);
+
+  if (!expression) {
+    throw new Error('Could not build search expression - no matching clusters found for selected attributes');
+  }
+
+  console.log('Search expression:', expression);
+
+  // Step 4: Call find_persons with a limit of 50 contacts
+  // Note: The API returns max ~10 samples inline. For more records, we'd need format: "json" or "csv"
+  // but that creates an S3 export which can fail with INTERNAL_ERROR for large result sets.
+  // For now, we use inline format with limit to get the available samples.
+  const MAX_SIMILAR_CONTACTS = 50;
+  let findResult: any;
+  try {
+    findResult = await agent.callToolDirect('find_persons', {
+      expression,
+      identifier_type: 'email',
+      limit: MAX_SIMILAR_CONTACTS,
+      format: 'none', // Inline results (max ~10 samples)
+    });
+    console.log('find_persons result:', JSON.stringify(findResult).substring(0, 500));
+  } catch (error) {
+    logError('Error calling find_persons', error);
+    throw new Error('Failed to find similar contacts');
+  }
+
+  // Parse the find_persons response
+  let parsedResult: any = {};
+  if (findResult?.content) {
+    let content = findResult.content;
+    if (typeof content === 'string') {
+      try {
+        content = JSON.parse(content);
+      } catch {
+        if (Array.isArray(content) && content[0]?.type === 'text') {
+          content = JSON.parse(content[0].text);
+        }
+      }
+    }
+    if (Array.isArray(content) && content[0]?.type === 'text') {
+      try {
+        parsedResult = JSON.parse(content[0].text);
+      } catch {
+        parsedResult = {};
+      }
+    } else {
+      parsedResult = content;
+    }
+  }
+
+  const total = parsedResult.total || 0;
+  const sample = parsedResult.sample || [];
+  const exportUrl = parsedResult.export?.url || parsedResult.export?.download_url || '';
+
+  console.log(`Found ${total} similar contacts, ${sample.length} samples, export: ${exportUrl ? 'yes' : 'no'}`);
+
+  // If we have sample contacts, enrich them with full profile data using get_person
+  let enrichedContacts: EnrichedRow[] = [];
+
+  if (sample.length > 0) {
+    // Convert person_ids to strings - the API expects string IDs
+    const personIds = sample
+      .map((contact: any) => contact.person_id)
+      .filter(Boolean)
+      .map((id: any) => String(id));
+    console.log(`Enriching ${personIds.length} similar contacts with full profile data`);
+
+    if (personIds.length > 0) {
+      try {
+        // Call get_person to get full profile data for the sample contacts
+        const getPersonResult = await agent.callToolDirect('get_person', {
+          person_ids: personIds,
+          domains: [
+            'name', 'email', 'phone', 'address',
+            'demographic', 'household', 'interest', 'lifestyle', 'financial'
+          ],
+          format: 'none',
+        });
+
+        console.log('get_person result (first 500 chars):', JSON.stringify(getPersonResult).substring(0, 500));
+
+        // Parse the get_person response
+        let profiles: any[] = [];
+        if (getPersonResult?.content) {
+          let content = getPersonResult.content;
+          if (Array.isArray(content) && content[0]?.type === 'text') {
+            try {
+              const parsed = JSON.parse(content[0].text);
+              profiles = parsed.profiles || [];
+            } catch {
+              console.log('Failed to parse get_person response');
+            }
+          }
+        }
+
+        console.log(`Got ${profiles.length} enriched profiles`);
+
+        // Flatten the enriched profiles
+        if (profiles.length > 0) {
+          enrichedContacts = profiles.map((profile: any) => flattenProfileData(profile));
+        }
+      } catch (error) {
+        console.error('Error enriching similar contacts:', error);
+        // Fall back to basic flattening if enrichment fails
+      }
+    }
+  }
+
+  // If enrichment failed or returned no results, fall back to basic flattening
+  if (enrichedContacts.length === 0 && sample.length > 0) {
+    console.log('Falling back to basic contact flattening');
+    enrichedContacts = sample.map((contact: any) => {
+      const flat: Record<string, any> = {
+        person_id: contact.person_id,
+      };
+
+      // Flatten identifiers
+      if (contact.identifiers) {
+        // Handle email array
+        if (Array.isArray(contact.identifiers.email)) {
+          contact.identifiers.email.forEach((email: string, idx: number) => {
+            flat[`email${idx + 1}`] = email;
+          });
+        } else if (typeof contact.identifiers.email === 'object') {
+          Object.entries(contact.identifiers.email).forEach(([key, value]) => {
+            flat[key] = value;
+          });
+        }
+
+        // Handle phone array
+        if (Array.isArray(contact.identifiers.phone)) {
+          contact.identifiers.phone.forEach((phone: string, idx: number) => {
+            flat[`phone${idx + 1}`] = phone;
+          });
+        } else if (typeof contact.identifiers.phone === 'object') {
+          Object.entries(contact.identifiers.phone).forEach(([key, value]) => {
+            flat[key] = value;
+          });
+        }
+
+        // Handle address
+        if (contact.identifiers.address) {
+          if (Array.isArray(contact.identifiers.address)) {
+            contact.identifiers.address.forEach((addr: any, idx: number) => {
+              if (typeof addr === 'object') {
+                Object.entries(addr).forEach(([key, value]) => {
+                  flat[`address${idx + 1}_${key}`] = value;
+                });
+              } else {
+                flat[`address${idx + 1}`] = addr;
+              }
+            });
+          } else if (typeof contact.identifiers.address === 'object') {
+            Object.entries(contact.identifiers.address).forEach(([key, value]) => {
+              flat[`address_${key}`] = value;
+            });
+          }
+        }
+      }
+
+      return flat;
+    });
+  }
+
+  return {
+    similarContacts: enrichedContacts,
+    exportLinks: exportUrl ? [exportUrl] : [],
+    total,
+    expression,
   };
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { messages, uploadedData } = body;
+    const { messages, uploadedData, workflowMode = 'enrich', icpSearchParams } = body;
 
     if (!messages || !Array.isArray(messages)) {
       return NextResponse.json(
@@ -615,6 +997,40 @@ export async function POST(request: NextRequest) {
 
     // Get the singleton agent instance
     const agent = getAgent();
+
+    // Handle Find Similar Contacts workflow - search step
+    if (workflowMode === 'find-similar' && icpSearchParams?.selectedAttributes) {
+      console.log('Processing Find Similar search with selected attributes');
+      try {
+        const result = await processFindSimilarContacts(
+          agent,
+          icpSearchParams.selectedAttributes
+        );
+
+        const sampleCount = result.similarContacts.length;
+        const totalFormatted = Number(result.total).toLocaleString();
+
+        let responseMessage = `Found ${totalFormatted} total contacts matching your criteria.`;
+        if (sampleCount > 0) {
+          responseMessage += ` Showing ${sampleCount} sample contacts.`;
+        } else {
+          responseMessage += ` No sample contacts available for preview.`;
+        }
+
+        return NextResponse.json({
+          response: responseMessage,
+          similarContacts: result.similarContacts,
+          exportLinks: result.exportLinks,
+          totalFound: result.total,
+        });
+      } catch (error) {
+        logError('Error in find similar search:', error);
+        return NextResponse.json({
+          response: `Error finding similar contacts: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          error: true,
+        });
+      }
+    }
 
     // If there's uploaded data, add context to the first user message
     let chatMessages: ChatMessage[] = messages;
@@ -709,8 +1125,46 @@ Please help me enrich this data by completing BOTH steps with the EXACT person_i
     let exportLinks: string[] = [];
     let resolvedCount = 0;
     let enrichedCount = 0;
+    let icpAnalysis: ICPAnalysisResult | null = null;
+
     if (uploadedData) {
-      console.log(`Processing ${toolCalls.length} tool calls...`);
+      console.log(`Processing ${toolCalls.length} tool calls... (workflowMode: ${workflowMode})`);
+
+      if (workflowMode === 'find-similar') {
+        // Find Similar workflow - ICP analysis step
+        // First enrich the data, then analyze ICP
+        const result = await processICPAnalysis(agent, toolCalls, uploadedData);
+        enrichedData = result.enrichedRows;
+        icpAnalysis = result.icpAnalysis;
+        resolvedCount = enrichedData.length;
+        enrichedCount = enrichedData.filter(row => row.person_id).length;
+
+        console.log(`ICP Analysis complete: ${icpAnalysis.topAttributes.length} attributes identified`);
+
+        // Build response message for ICP analysis with human-friendly labels
+        const topAttrsPreview = icpAnalysis.topAttributes.slice(0, 5)
+          .map(attr => `  - ${formatAttributeLabel(attr.attributeName, attr.attributeValue)} (${attr.percentage.toFixed(0)}%)`)
+          .join('\n');
+
+        const userFacingResponse = `I've analyzed your ${icpAnalysis.totalProfiles} contacts and identified common characteristics.
+
+**Top characteristics found:**
+${topAttrsPreview}
+
+Use the sidebar to select which characteristics to match and find similar contacts.`;
+
+        return NextResponse.json({
+          response: userFacingResponse,
+          toolCalls,
+          enrichedData,
+          exportLinks: [],
+          icpAnalysis,
+          resolvedCount,
+          enrichedCount,
+        });
+      }
+
+      // Standard Enrich workflow
       const enrichmentResult = await processEnrichedData(agent, toolCalls, uploadedData);
       enrichedData = enrichmentResult.rows;
       exportLinks = enrichmentResult.exportLinks;
@@ -719,6 +1173,14 @@ Please help me enrich this data by completing BOTH steps with the EXACT person_i
       console.log(`Enriched data rows: ${enrichedData?.length || 0}`);
       if (enrichedData && enrichedData.length > 0) {
         console.log('First enriched row keys:', Object.keys(enrichedData[0]).join(', '));
+        // Find and log an actually enriched row
+        const enrichedSample = enrichedData.find(row => Object.keys(row).length > 5);
+        if (enrichedSample) {
+          console.log(`Found enriched row with ${Object.keys(enrichedSample).length} keys`);
+          console.log('Sample enriched keys:', Object.keys(enrichedSample).slice(0, 20).join(', '));
+        } else {
+          console.log('WARNING: No rows have more than 5 keys - enrichment may have failed');
+        }
       }
 
       if (resolvedCount > 0 || enrichedCount > 0) {
@@ -751,6 +1213,23 @@ Please help me enrich this data by completing BOTH steps with the EXACT person_i
     if (resolvedCount > 0 || enrichedCount > 0) {
       const summaryText = buildUserFacingSummary(resolvedCount, enrichedCount, enrichedData, exportLinks);
       userFacingResponse = summaryText || finalResponseText;
+    }
+
+    // Debug: Log what we're about to send
+    if (enrichedData && enrichedData.length > 0) {
+      const sampleRow = enrichedData.find(r => Object.keys(r).length > 5) || enrichedData[0];
+      console.log(`[RESPONSE] About to send ${enrichedData.length} rows`);
+      console.log(`[RESPONSE] Sample row has ${Object.keys(sampleRow).length} keys`);
+      console.log(`[RESPONSE] Sample keys: ${Object.keys(sampleRow).slice(0, 15).join(', ')}`);
+
+      // Test JSON serialization
+      try {
+        const testJson = JSON.stringify(sampleRow);
+        const parsed = JSON.parse(testJson);
+        console.log(`[RESPONSE] After JSON round-trip: ${Object.keys(parsed).length} keys`);
+      } catch (e) {
+        console.error(`[RESPONSE] JSON serialization error:`, e);
+      }
     }
 
     return NextResponse.json({

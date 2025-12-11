@@ -11,7 +11,6 @@ interface ExportButtonProps {
 }
 
 export default function ExportButton({ data, filename = 'enriched-data.csv', downloadUrl }: ExportButtonProps) {
-  console.log('ExportButton: data is', data ? `${data.length} rows` : 'null');
 
   const hasLocalData = Array.isArray(data) && data.length > 0;
   const hasDownloadUrl = Boolean(downloadUrl);
@@ -34,7 +33,6 @@ export default function ExportButton({ data, filename = 'enriched-data.csv', dow
       }
 
       if (hasLocalData) {
-        console.log('ExportButton: No remote export link, using in-memory rows');
         exportToCSV(data!, filename);
         return;
       }
@@ -198,9 +196,13 @@ export default function ExportButton({ data, filename = 'enriched-data.csv', dow
     for (const field of fields) {
       const value = row[field];
       if (typeof value !== 'string') continue;
-      const normalized = normalizeContactValue(value, type);
-      if (normalized && !values.includes(normalized)) {
-        values.push(normalized);
+      // Split by comma in case the field contains multiple values (e.g., "email1@example.com, email2@example.com")
+      const parts = value.split(',').map(p => p.trim()).filter(p => p.length > 0);
+      for (const part of parts) {
+        const normalized = normalizeContactValue(part, type);
+        if (normalized && !values.includes(normalized)) {
+          values.push(normalized);
+        }
       }
     }
     return values;

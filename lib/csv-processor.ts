@@ -105,7 +105,18 @@ function detectFieldTypes(headers: string[]): ParsedCSV['detectedFields'] {
  * Export enriched data to CSV
  */
 export function exportToCSV(data: EnrichedRow[], filename: string = 'enriched-data.csv') {
-  const csv = Papa.unparse(data);
+  // Collect all unique keys from all rows for proper CSV headers
+  // Papa.unparse() by default only uses keys from the first row, so we need to specify all columns
+  const allKeys = new Set<string>();
+  for (const row of data) {
+    for (const key of Object.keys(row)) {
+      allKeys.add(key);
+    }
+  }
+  const columns = Array.from(allKeys);
+
+  // Use explicit columns to ensure all fields are included even if first row doesn't have them
+  const csv = Papa.unparse(data, { columns });
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
@@ -127,8 +138,6 @@ export function flattenProfileData(profile: any): Record<string, string> {
 
   // First, parse all JSON string fields (t1.json, t2.json, etc.)
   const parsedData: any = {};
-
-  console.log('flattenProfileData: Processing profile with keys:', Object.keys(profile).join(', '));
 
   for (const key in profile) {
     const value = profile[key];
@@ -204,9 +213,6 @@ export function flattenProfileData(profile: any): Record<string, string> {
   }
 
   flatten(parsedData);
-
-  console.log('flattenProfileData: Returning flattened data with', Object.keys(flattened).length, 'keys');
-  console.log('flattenProfileData: Sample keys:', Object.keys(flattened).slice(0, 10).join(', '));
 
   return flattened;
 }
@@ -318,4 +324,332 @@ export function extractInterests(profile: any): Partial<EnrichedRow> {
   }
 
   return interests;
+}
+
+// ============================================
+// ICP (Ideal Customer Profile) Analysis Types
+// ============================================
+
+export interface ICPAttribute {
+  attribute: string;      // e.g., "gender=Female"
+  attributeName: string;  // e.g., "gender" (original field name)
+  attributeValue: string; // e.g., "Female"
+  clusterName: string;    // Normalized name for WattData API (e.g., "gender" instead of "demographic_gender_value")
+  count: number;
+  percentage: number;
+  selected: boolean;      // For UI state
+  operator: 'AND' | 'OR'; // For UI state
+}
+
+export interface ICPAnalysisResult {
+  topAttributes: ICPAttribute[];
+  totalProfiles: number;
+}
+
+// Fields to exclude from ICP analysis (PII and identifiers)
+const ICP_EXCLUDED_FIELDS = new Set([
+  // Identifiers
+  'person_id', 't0.person_id', 'personid',
+  // Contact info
+  'email', 'email1', 'email2', 'email3', 'email4',
+  'phone', 'phone1', 'phone2', 'phone3', 'phone4',
+  'address', 'address1', 'address2', 'street', 'city', 'state', 'zip', 'zipcode', 'postal_code',
+  // Names
+  'name', 'first_name', 'last_name', 'full_name', 'firstname', 'lastname',
+  // Quality/metadata fields
+  'overall_quality_score', 'quality_score', 'match_score',
+  // Internal fields
+  'enrichment_error', 'enrichment_status',
+]);
+
+// Field name patterns to exclude (regex patterns)
+const ICP_EXCLUDED_PATTERNS = [
+  /^email\d*$/i,
+  /^phone\d*$/i,
+  /^address\d*$/i,
+  /^t\d+\./,  // t0., t1., etc. prefixes from raw MCP data
+  /cluster_id$/i,  // cluster IDs are internal (but keep cluster values)
+  /^_/,  // Fields starting with underscore
+];
+
+/**
+ * Normalize field name for cluster lookup
+ * Removes common suffixes added by flattening and converts to WattData cluster name format
+ */
+function normalizeClusterName(fieldName: string): string {
+  let name = fieldName;
+
+  // Remove common suffixes from flattened data
+  const suffixesToRemove = ['_value', '_cluster_id', '_detail'];
+  for (const suffix of suffixesToRemove) {
+    if (name.endsWith(suffix)) {
+      name = name.slice(0, -suffix.length);
+    }
+  }
+
+  // Remove domain prefixes (demographic_, interest_, etc.)
+  const prefixesToRemove = ['demographic_', 'interest_', 'lifestyle_', 'financial_', 'employment_', 'household_', 'affinity_'];
+  for (const prefix of prefixesToRemove) {
+    if (name.startsWith(prefix)) {
+      name = name.slice(prefix.length);
+    }
+  }
+
+  return name;
+}
+
+/**
+ * Check if a field should be excluded from ICP analysis
+ */
+function shouldExcludeField(fieldName: string): boolean {
+  const lowerField = fieldName.toLowerCase();
+
+  if (ICP_EXCLUDED_FIELDS.has(lowerField)) {
+    return true;
+  }
+
+  for (const pattern of ICP_EXCLUDED_PATTERNS) {
+    if (pattern.test(fieldName)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Track logged fields to avoid spam
+const loggedExcludedFields = new Set<string>();
+const loggedIncludedFields = new Set<string>();
+
+/**
+ * Debug version - logs field exclusion reasons (first occurrence only)
+ */
+function shouldExcludeFieldDebug(fieldName: string): boolean {
+  const lowerField = fieldName.toLowerCase();
+
+  if (ICP_EXCLUDED_FIELDS.has(lowerField)) {
+    if (!loggedExcludedFields.has(fieldName)) {
+      loggedExcludedFields.add(fieldName);
+      console.log(`[ICP Debug] Excluding field "${fieldName}" - in excluded fields list`);
+    }
+    return true;
+  }
+
+  for (const pattern of ICP_EXCLUDED_PATTERNS) {
+    if (pattern.test(fieldName)) {
+      if (!loggedExcludedFields.has(fieldName)) {
+        loggedExcludedFields.add(fieldName);
+        console.log(`[ICP Debug] Excluding field "${fieldName}" - matches pattern ${pattern}`);
+      }
+      return true;
+    }
+  }
+
+  if (!loggedIncludedFields.has(fieldName)) {
+    loggedIncludedFields.add(fieldName);
+    console.log(`[ICP Debug] Including field "${fieldName}"`);
+  }
+
+  return false;
+}
+
+/**
+ * Check if a value is meaningful for ICP analysis
+ */
+function isMeaningfulValue(value: unknown): boolean {
+  // Skip objects/arrays - they can't be used as categorical values
+  if (value !== null && typeof value === 'object') return false;
+
+  if (value === null || value === undefined) return false;
+
+  // Convert to string for further checks
+  const strValue = String(value);
+  const trimmed = strValue.trim().toLowerCase();
+
+  // Exclude empty, null-like, or generic values
+  if (!trimmed || trimmed === 'null' || trimmed === 'undefined' || trimmed === 'n/a' || trimmed === 'na') {
+    return false;
+  }
+
+  // Exclude [object Object] which indicates a failed string conversion
+  if (trimmed === '[object object]') {
+    return false;
+  }
+
+  // Exclude very long values (likely free text, not categorical)
+  if (trimmed.length > 100) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Analyze enriched profiles to extract ICP (Ideal Customer Profile) characteristics
+ * Returns top attributes sorted by frequency with default selections
+ */
+export function analyzeICPFromProfiles(rows: EnrichedRow[]): ICPAnalysisResult {
+  const totalProfiles = rows.length;
+
+  console.log(`[ICP Analysis] Starting analysis of ${totalProfiles} profiles`);
+
+  if (totalProfiles === 0) {
+    return { topAttributes: [], totalProfiles: 0 };
+  }
+
+  // Log sample row to understand structure
+  if (rows[0]) {
+    const keys = Object.keys(rows[0]);
+    console.log(`[ICP Analysis] Sample row has ${keys.length} fields`);
+    console.log(`[ICP Analysis] Sample fields:`, keys.slice(0, 20).join(', '));
+  }
+
+  // Count attribute frequencies
+  const attributeCounts = new Map<string, { name: string; value: string; count: number }>();
+  let excludedFieldCount = 0;
+  let excludedValueCount = 0;
+  let includedCount = 0;
+
+  for (const row of rows) {
+    for (const [fieldName, fieldValue] of Object.entries(row)) {
+      // Skip excluded fields (using debug version for logging)
+      if (shouldExcludeFieldDebug(fieldName)) {
+        excludedFieldCount++;
+        continue;
+      }
+
+      // Skip non-meaningful values
+      if (!isMeaningfulValue(fieldValue)) {
+        excludedValueCount++;
+        continue;
+      }
+
+      includedCount++;
+      const value = String(fieldValue).trim();
+      const attributeKey = `${fieldName}=${value}`;
+
+      const existing = attributeCounts.get(attributeKey);
+      if (existing) {
+        existing.count++;
+      } else {
+        attributeCounts.set(attributeKey, {
+          name: fieldName,
+          value: value,
+          count: 1,
+        });
+      }
+    }
+  }
+
+  console.log(`[ICP Analysis] Excluded ${excludedFieldCount} field instances, ${excludedValueCount} value instances`);
+  console.log(`[ICP Analysis] Included ${includedCount} attribute instances`);
+  console.log(`[ICP Analysis] Found ${attributeCounts.size} unique attribute-value pairs`);
+
+  // Convert to array and sort by frequency (descending)
+  const allAttributes = Array.from(attributeCounts.entries())
+    .map(([key, data]) => ({
+      attribute: key,
+      attributeName: data.name,
+      attributeValue: data.value,
+      clusterName: normalizeClusterName(data.name), // Normalized for WattData API
+      count: data.count,
+      percentage: (data.count / totalProfiles) * 100,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  console.log(`[ICP Analysis] Top 5 attributes before threshold filter:`);
+  allAttributes.slice(0, 5).forEach(attr => {
+    console.log(`  - ${attr.attribute}: ${attr.count} (${attr.percentage.toFixed(1)}%)`);
+  });
+
+  // Filter by minimum percentage (lowered to 5% for better results)
+  const MIN_PERCENTAGE = 5;
+  const sortedAttributes = allAttributes.filter(attr => attr.percentage >= MIN_PERCENTAGE);
+
+  console.log(`[ICP Analysis] ${sortedAttributes.length} attributes above ${MIN_PERCENTAGE}% threshold`);
+
+  // Separate positive and negative attributes
+  // Positive = true values or non-boolean values
+  // Negative = false values
+  const positiveAttributes = sortedAttributes.filter(attr =>
+    attr.attributeValue.toLowerCase() !== 'false'
+  );
+  const negativeAttributes = sortedAttributes.filter(attr =>
+    attr.attributeValue.toLowerCase() === 'false'
+  );
+
+  console.log(`[ICP Analysis] ${positiveAttributes.length} positive attributes, ${negativeAttributes.length} negative attributes`);
+
+  // Take a balanced mix: prioritize positive attributes but include negative too
+  // Target: up to 20 positive + up to 15 negative = max 35 total
+  const MAX_POSITIVE = 20;
+  const MAX_NEGATIVE = 15;
+  const MAX_TOTAL = 35;
+
+  const selectedPositive = positiveAttributes.slice(0, MAX_POSITIVE);
+  const selectedNegative = negativeAttributes.slice(0, MAX_NEGATIVE);
+
+  // Combine and sort by percentage (so most common appear first regardless of positive/negative)
+  const combinedAttributes = [...selectedPositive, ...selectedNegative]
+    .sort((a, b) => b.percentage - a.percentage)
+    .slice(0, MAX_TOTAL);
+
+  // Set default selections: select top 5 positive attributes by default
+  const topPositiveNames = new Set(
+    positiveAttributes.slice(0, 5).map(a => a.attribute)
+  );
+
+  const topAttributes: ICPAttribute[] = combinedAttributes.map((attr) => ({
+    ...attr,
+    selected: topPositiveNames.has(attr.attribute), // Select top 5 positive by default
+    operator: 'AND' as const,
+  }));
+
+  console.log(`[ICP Analysis] Returning ${topAttributes.length} attributes (${selectedPositive.length} positive, ${selectedNegative.length} negative)`);
+
+  return {
+    topAttributes,
+    totalProfiles,
+  };
+}
+
+/**
+ * Build a boolean expression from selected ICP attributes and cluster mappings
+ * Respects user's AND/OR operator choices for each attribute
+ *
+ * clusterMap should be keyed by "clusterName=value" format (e.g., "gender=Female")
+ */
+export function buildClusterExpression(
+  selectedAttributes: ICPAttribute[],
+  clusterMap: Map<string, string> // "clusterName=value" -> cluster_id
+): string {
+  const validAttributes = selectedAttributes.filter(attr => {
+    // Use normalized clusterName with value for lookup
+    const lookupKey = `${attr.clusterName}=${attr.attributeValue}`;
+    const clusterId = clusterMap.get(lookupKey);
+    console.log(`[buildClusterExpression] Looking up: "${lookupKey}" -> ${clusterId || 'NOT FOUND'}`);
+    return clusterId !== undefined;
+  });
+
+  if (validAttributes.length === 0) {
+    console.log(`[buildClusterExpression] No valid attributes found in clusterMap`);
+    return '';
+  }
+
+  const parts: string[] = [];
+
+  for (let i = 0; i < validAttributes.length; i++) {
+    const attr = validAttributes[i];
+    const lookupKey = `${attr.clusterName}=${attr.attributeValue}`;
+    const clusterId = clusterMap.get(lookupKey)!;
+
+    if (i > 0) {
+      // Use the operator from the previous attribute
+      parts.push(validAttributes[i - 1].operator);
+    }
+    parts.push(clusterId);
+  }
+
+  console.log(`[buildClusterExpression] Built expression: ${parts.join(' ')}`);
+  return parts.join(' ');
 }
